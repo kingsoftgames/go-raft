@@ -1,0 +1,56 @@
+syntax = "proto3";
+
+option go_package = ".;test";
+
+package test;
+
+message Header{
+  string hash = 1;
+  bool read_only = 2;       //readonly
+}
+// The Team service definition.
+service Test {
+  rpc GetRequest (GetReq) returns (GetRsp) {}
+  rpc SetRequest (SetReq) returns (SetRsp) {}
+  rpc DelRequest (DelReq) returns (DelRsp) {}
+}
+
+message GetReq{
+  Header header = 1;
+  string a = 2;
+  int32 b = 3;
+  fixed64 c = 4;
+}
+message GetRsp{
+  string a = 1;
+  TestUnit b = 2;
+}
+message TestUnit{
+  string a = 1;
+  int32 b = 2;
+  fixed64 c = 3;
+  string d = 4;
+  message TestSubUnit{
+    string a = 1;
+    int32 b = 2;
+    fixed64 c = 3;
+    string d = 4;
+    bool e = 5;
+  }
+}
+
+message SetReq{
+  Header header = 1;
+  map<string,TestUnit> a = 2;
+}
+message SetRsp{
+  string a = 1;
+  TestUnit b = 2;
+}
+message DelReq{
+  Header header = 1;
+  string a=2;
+}
+message DelRsp{
+  string a =1;
+}

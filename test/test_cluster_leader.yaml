@@ -1,0 +1,14 @@
+#test_follower.yaml
+
+RaftAddr:         127.0.0.1:8301
+GrpcApiAddr:      127.0.0.1:8311
+HttpApiAddr:      127.0.0.1:8321
+StoreDir:         ./
+StoreInMem:       true
+CodeC:            msgpack
+PortShift:        0
+NodeId:           n1
+JoinAddr:
+ConnectTimeoutMs: 5000
+LogConfig:
+  Level: DEBUG

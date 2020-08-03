@@ -1,0 +1,14 @@
+#app.yaml
+
+RaftAddr:         127.0.0.1:8300
+GrpcApiAddr:      127.0.0.1:8310
+HttpApiAddr:      127.0.0.1:8320
+StoreDir:         ./
+StoreInMem:       true
+Codec:            msgpack
+PortShift:        0
+NodeId:           n0
+JoinAddr:
+ConnectTimeoutMs: 5000
+LogConfig:
+  Level: DEBUG
