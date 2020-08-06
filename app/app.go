@@ -10,14 +10,15 @@ import (
 	"sync"
 	"time"
 
+	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
 	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/inner"
+	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/store"
 
 	"google.golang.org/grpc"
-
+	"google.golang.org/grpc/health"
+	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/store"
 	_ "github.com/gin-gonic/gin"
 	_ "github.com/go-yaml/yaml"
 	"github.com/sirupsen/logrus"
@@ -128,6 +129,9 @@ func (th *MainApp) Init(configPath string) int {
 
 	th.service = New(th.config.GrpcApiAddr, th.store)
 	inner.RegisterRaftServer(th.service.GetGrpcServer(), &RaftServerGrpc{App: th})
+	//register health
+	healthgrpc.RegisterHealthServer(th.service.GetGrpcServer(), health.NewServer())
+
 	newGrpcClientFunction := th.app.Register(th.service.GetGrpcServer())
 
 	if err := th.service.Start(); err != nil {

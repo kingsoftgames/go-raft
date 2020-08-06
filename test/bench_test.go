@@ -19,6 +19,7 @@ import (
 	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/app"
 	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
 	"google.golang.org/grpc"
+	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 )
 
 //bench for app
@@ -78,6 +79,22 @@ func init() {
 	app.RegisterApp(testApp{})
 }
 
+func Test_Health(t *testing.T) {
+	singleApp(t, func() {
+		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+		con, err := grpc.DialContext(ctx, "127.0.0.1:8310", grpc.WithBlock(), grpc.WithInsecure())
+		if err != nil {
+			t.Errorf("Test_Health Failed,%s", err.Error())
+		}
+		c := healthgrpc.NewHealthClient(con)
+		r, e := c.Check(ctx, &healthgrpc.HealthCheckRequest{Service: ""})
+		if e != nil {
+			t.Fatalf("Test_Health err, %s", e.Error())
+		}
+		t.Logf("Test_Health status,%v", r.Status)
+	})
+}
+
 var count = 5000
 var timeout = 5000 * time.Millisecond
 
@@ -101,6 +118,7 @@ func singleApp(t *testing.T, clientFunc func()) {
 	})
 	exitWait.Wait()
 }
+
 func Test_markSingleAppGRpc(t *testing.T) {
 	singleApp(t, func() {
 		c := newClient("127.0.0.1:8310")
@@ -204,7 +222,6 @@ func Test_ClusterAppHttp(t *testing.T) {
 				//httpClient(t, addr[idx%len(addr)], "/api/test/get", key, 1, true)
 				//httpClient(t, addr[idx%len(addr)], "/api/test/get", key, 1, true)
 				//httpClient(t, addr[idx%len(addr)], "/api/test/get", key, 1, true)
-
 
 				//httpClient(t, addr[idx%len(addr)], "/api/test/set", key, 1, false)
 				//httpClient(t, addr[idx%len(addr)], "/api/test/get", key, 1, false)
