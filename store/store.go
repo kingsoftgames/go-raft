@@ -14,8 +14,8 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"github.com/golang/protobuf/proto"
 	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
+	"github.com/golang/protobuf/proto"
 
 	"github.com/hashicorp/raft"
 	raftboltdb "github.com/hashicorp/raft-boltdb"
@@ -183,7 +183,6 @@ func (th *RaftStore) Join(nodeId string, addr string, apiAddr string) error {
 		logrus.Infof("SetApiAddr failed,%s", err.Error())
 	}
 	logrus.Infof("join succeed")
-	th.raft.LeaderCh()
 	return nil
 }
 func (th *RaftStore) Apply(log *raft.Log) interface{} {

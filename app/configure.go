@@ -36,9 +36,9 @@ type configure struct {
 
 func newDefaultConfigure() *configure {
 	config := &configure{
-		RaftAddr:         "127.0.0.1:8300",
-		GrpcApiAddr:      "127.0.0.1:8310",
-		HttpApiAddr:      "127.0.0.1:8320",
+		RaftAddr:         "127.0.0.1:18300",
+		GrpcApiAddr:      "127.0.0.1:18310",
+		HttpApiAddr:      "127.0.0.1:18320",
 		StoreDir:         "./",
 		StoreInMem:       true,
 		Codec:            "msgpack",

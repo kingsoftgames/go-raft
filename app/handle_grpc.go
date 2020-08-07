@@ -12,9 +12,12 @@ type RaftServerGrpc struct {
 	App *MainApp
 }
 
-func (th *RaftServerGrpc) JoinRequest(_ context.Context, req *inner.JoinReq) (*inner.JoinRsp, error) {
+func (th *RaftServerGrpc) JoinRequest(ctx context.Context, req *inner.JoinReq) (*inner.JoinRsp, error) {
 	fmt.Printf("[API]JoinRequest,%s,%s\n", req.NodeId, req.Addr)
 	rsp := &inner.JoinRsp{}
+	if th.App.GetStore().IsFollower() {
+		return th.App.service.GetInner().JoinRequest(ctx, req)
+	}
 	if err := th.App.GetStore().Join(req.NodeId, req.Addr, req.ApiAddr); err != nil {
 		rsp.Result = -1
 		rsp.Message = err.Error()

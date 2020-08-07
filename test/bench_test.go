@@ -82,7 +82,7 @@ func init() {
 func Test_Health(t *testing.T) {
 	singleApp(t, func() {
 		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-		con, err := grpc.DialContext(ctx, "127.0.0.1:8310", grpc.WithBlock(), grpc.WithInsecure())
+		con, err := grpc.DialContext(ctx, "127.0.0.1:18310", grpc.WithBlock(), grpc.WithInsecure())
 		if err != nil {
 			t.Errorf("Test_Health Failed,%s", err.Error())
 		}
@@ -121,7 +121,7 @@ func singleApp(t *testing.T, clientFunc func()) {
 
 func Test_markSingleAppGRpc(t *testing.T) {
 	singleApp(t, func() {
-		c := newClient("127.0.0.1:8310")
+		c := newClient("127.0.0.1:18310")
 		var w sync.WaitGroup
 
 		for i := 0; i < count; i++ {
@@ -146,10 +146,10 @@ func Test_markSingleAppHttp(t *testing.T) {
 			go func() {
 				defer w.Done()
 				key := strconv.Itoa(rand.Int())
-				httpClient(t, "http://127.0.0.1:8320", "/api/test/set", key, 1, true)
-				httpClient(t, "http://127.0.0.1:8320", "/api/test/get", key, 1, true)
-				httpClient(t, "http://127.0.0.1:8320", "/api/test/del", key, 1, true)
-				httpClient(t, "http://127.0.0.1:8320", "/api/test/get", key, 1, true)
+				httpClient(t, "http://127.0.0.1:18320", "/api/test/set", key, 1, true)
+				httpClient(t, "http://127.0.0.1:18320", "/api/test/get", key, 1, true)
+				httpClient(t, "http://127.0.0.1:18320", "/api/test/del", key, 1, true)
+				httpClient(t, "http://127.0.0.1:18320", "/api/test/get", key, 1, true)
 			}()
 		}
 		w.Wait()
@@ -181,7 +181,7 @@ func clusterApp(t *testing.T, clientFunc func()) {
 
 func Test_ClusterAppGRpc(t *testing.T) {
 	clusterApp(t, func() {
-		c := []*app.GrpcClient{newClient("127.0.0.1:8311"), newClient("127.0.0.1:8312")}
+		c := []*app.GrpcClient{newClient("127.0.0.1:18311"), newClient("127.0.0.1:18312")}
 		var w sync.WaitGroup
 
 		for i := 0; i < count; i++ {
@@ -206,7 +206,7 @@ func Test_ClusterAppGRpc(t *testing.T) {
 
 func Test_ClusterAppHttp(t *testing.T) {
 	clusterApp(t, func() {
-		addr := []string{"http://127.0.0.1:8321", "http://127.0.0.1:8322"}
+		addr := []string{"http://127.0.0.1:18321", "http://127.0.0.1:18322"}
 		var w sync.WaitGroup
 		for i := 0; i < count; i++ {
 			w.Add(1)
@@ -252,7 +252,10 @@ func clusterApp2(t *testing.T, clientFunc func()) {
 						appFollower2.Stop()
 					}()
 				})
-				appFollower2.Init("test_follower2.yaml")
+				if rst := appFollower2.Init("test_follower2.yaml"); rst != 0 {
+					t.Errorf("appFollower2 Init erro,%d", rst)
+					return
+				}
 				go appFollower2.Start()
 			})
 			appFollower.Init("test_follower.yaml")
@@ -264,8 +267,8 @@ func clusterApp2(t *testing.T, clientFunc func()) {
 }
 
 func Test_ClusterApp2GRpc(t *testing.T) {
-	clusterApp(t, func() {
-		c := []*app.GrpcClient{newClient("127.0.0.1:8311"), newClient("127.0.0.1:8312"), newClient("127.0.0.1:8313")}
+	clusterApp2(t, func() {
+		c := []*app.GrpcClient{newClient("127.0.0.1:18311"), newClient("127.0.0.1:18312"), newClient("127.0.0.1:18313")}
 		var w sync.WaitGroup
 
 		for i := 0; i < count; i++ {
@@ -285,7 +288,7 @@ func Test_ClusterApp2GRpc(t *testing.T) {
 
 func Test_ClusterApp2Http(t *testing.T) {
 	clusterApp2(t, func() {
-		addr := []string{"http://127.0.0.1:8321", "http://127.0.0.1:8322", "http://127.0.0.1:8323"}
+		addr := []string{"http://127.0.0.1:18321", "http://127.0.0.1:18322", "http://127.0.0.1:18323"}
 		var w sync.WaitGroup
 		for i := 0; i < count; i++ {
 			w.Add(1)
