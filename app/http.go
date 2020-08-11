@@ -147,7 +147,7 @@ func (th *httpApi) handle(ctx context.Context, hd *handler, data io.Reader) (err
 	//th.mainApp.runChan <- h
 	handleContext(&th.mainApp.runLogic, ctx, h)
 	future.Wait()
-	return nil, rsp
+	return nil, rsp.Interface()
 }
 
 type handler struct {
