@@ -7,7 +7,7 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/common"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 

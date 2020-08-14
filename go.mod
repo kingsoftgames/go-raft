@@ -1,4 +1,4 @@
-module git.shiyou.kingsoft.com/WANGXU13/ppx-app
+module git.shiyou.kingsoft.com/wangxu13/ppx-app
 
 go 1.14
 

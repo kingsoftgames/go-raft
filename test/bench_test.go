@@ -16,8 +16,8 @@ import (
 
 	"github.com/hashicorp/raft"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/app"
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/app"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/common"
 	"google.golang.org/grpc"
 	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
 )

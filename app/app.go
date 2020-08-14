@@ -10,9 +10,9 @@ import (
 	"sync"
 	"time"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/inner"
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/store"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/common"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/inner"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/store"
 
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/health"

@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/inner"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/inner"
 
 	"github.com/sirupsen/logrus"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/common"
 	"github.com/golang/protobuf/proto"
 
 	"github.com/hashicorp/raft"

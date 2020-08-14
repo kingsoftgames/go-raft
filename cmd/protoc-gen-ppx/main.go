@@ -9,7 +9,7 @@ import (
 
 const (
 	contextPackage = protogen.GoImportPath("context")
-	appPackage     = protogen.GoImportPath("git.shiyou.kingsoft.com/WANGXU13/ppx-app/app")
+	appPackage     = protogen.GoImportPath("git.shiyou.kingsoft.com/wangxu13/ppx-app/app")
 )
 
 // generateFile generates a _grpc_implement.pb.go file containing gRPC service implement.

@@ -9,7 +9,7 @@ import (
 	"reflect"
 	"time"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/inner"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/inner"
 	"github.com/sirupsen/logrus"
 
 	"github.com/gin-gonic/gin"

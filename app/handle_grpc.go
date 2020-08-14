@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/inner"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/inner"
 )
 
 type RaftServerGrpc struct {

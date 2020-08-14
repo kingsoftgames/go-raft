@@ -9,15 +9,15 @@ import (
 	"sync"
 	"time"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/common"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/common"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/inner"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/inner"
 
 	"github.com/sirupsen/logrus"
 
-	"git.shiyou.kingsoft.com/WANGXU13/ppx-app/store"
+	"git.shiyou.kingsoft.com/wangxu13/ppx-app/store"
 	"github.com/hashicorp/raft"
 
 	"google.golang.org/grpc"

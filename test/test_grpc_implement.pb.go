@@ -4,7 +4,8 @@ package test
 
 import (
 	context "context"
-	app "git.shiyou.kingsoft.com/WANGXU13/ppx-app/app"
+
+	app "git.shiyou.kingsoft.com/wangxu13/ppx-app/app"
 )
 
 // ImplementedTestServer  with app.
