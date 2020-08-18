@@ -34,8 +34,8 @@ func decodeJsonFromRead(read io.Reader, v interface{}) error {
 func (th *httpApi) init(addr string) {
 	th.h.OnHttpRegister()
 	//heartbeat for elb
-	th.engine.GET("/index", func(context *gin.Context) {
-		context.String(200, "")
+	th.engine.GET("/health", func(context *gin.Context) {
+		context.String(200, "OK")
 	})
 	for path := range th.h.GetHandleMap() {
 		th.Post(path)
