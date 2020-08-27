@@ -7,15 +7,20 @@ import (
 
 	"github.com/sirupsen/logrus"
 
-	"git.shiyou.kingsoft.com/wangxu13/ppx-app/common"
+	"git.shiyou.kingsoft.com/infra/go-raft/common"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
 
 	"github.com/hashicorp/raft"
 )
 
+type HandlerValue struct {
+	paramReq reflect.Type
+	paramRsp reflect.Type
+	fn       reflect.Value
+}
 type Handler struct {
-	h map[string]reflect.Value
+	h map[string]*HandlerValue
 }
 
 type FutureSlice []raft.ApplyFuture
@@ -84,50 +89,12 @@ func (th FutureSliceError) Error() error {
 }
 
 type HandlerRtv struct {
-	Err error
-	//Future  raft.ApplyFuture
+	Err     error
 	Futures FutureSlice
 }
 
-//func (th *Handler) Register(impl interface{}) {
-//	th.h = map[string]reflect.Value{}
-//	implType := reflect.TypeOf(impl)
-//	for i := 0; i < implType.NumMethod(); i++ {
-//		method := implType.Method(i)
-//		if method.Func.Type().NumIn() == 4 { //注册App中的逻辑处理
-//			app := reflect.New(method.Func.Type().In(0).Elem()).Interface()
-//			if _, ok := app.(IApp); ok {
-//				req := reflect.New(method.Func.Type().In(1).Elem()).Interface()
-//				if msg, ok := req.(protoreflect.ProtoMessage); ok {
-//					logrus.Infof("GRpcRegister LogicHandler : %s", method.Name)
-//					methodName := common.GetHandleFunctionName(msg)
-//					th.h[methodName] = method.Func
-//				}
-//			}
-//		} else if method.Func.Type().NumIn() >= 2 { //注册grpcClient
-//			ctx := reflect.New(method.Func.Type().In(1).Elem()).Interface()
-//			if _, ok := ctx.(context.Context); ok {
-//				req := reflect.New(method.Func.Type().In(1).Elem()).Interface()
-//				if msg, ok := req.(protoreflect.ProtoMessage); ok {
-//					logrus.Infof("GRpcRegister grpc client: %s", method.Name)
-//					methodName := common.GetHandleFunctionName(msg)
-//					th.h[methodName] = method.Func
-//				}
-//			}
-//		}
-//		//if method.Func.Type().NumIn() == 4 {
-//		//	req := reflect.New(method.Func.Type().In(1).Elem()).Interface()
-//		//	if msg, ok := req.(protoreflect.ProtoMessage); ok {
-//		//		logrus.Infof("GRpcRegister : %s", method.Name)
-//		//		methodName := common.GetHandleFunctionName(msg)
-//		//		th.h[methodName] = method.Func
-//		//	}
-//		//}
-//	}
-//}
-
 func (th *Handler) Register(impl interface{}) {
-	th.h = map[string]reflect.Value{}
+	th.h = map[string]*HandlerValue{}
 	implType := reflect.TypeOf(impl)
 	for i := 0; i < implType.NumMethod(); i++ {
 		method := implType.Method(i)
@@ -136,7 +103,12 @@ func (th *Handler) Register(impl interface{}) {
 			if msg, ok := first.(protoreflect.ProtoMessage); ok { //注册App中的逻辑处理
 				logrus.Infof("GRpcRegister LogicHandler : %s", method.Name)
 				methodName := common.GetHandleFunctionName(msg)
-				th.h[methodName] = method.Func
+
+				th.h[methodName] = &HandlerValue{
+					fn:       method.Func,
+					paramReq: method.Func.Type().In(1).Elem(),
+					paramRsp: method.Func.Type().In(2).Elem(),
+				}
 			}
 		} else if method.Func.Type().NumOut() == 2 && method.Func.Type().Out(0).Kind() == reflect.Ptr {
 			firstReturn := reflect.New(method.Func.Type().Out(0).Elem()).Interface()
@@ -145,7 +117,9 @@ func (th *Handler) Register(impl interface{}) {
 				if msg, ok := req.(protoreflect.ProtoMessage); ok {
 					logrus.Infof("GRpcRegister grpc client: %s", method.Name)
 					methodName := common.GetHandleFunctionName(msg)
-					th.h[methodName] = method.Func
+					th.h[methodName] = &HandlerValue{
+						fn: method.Func,
+					}
 				}
 			}
 		}
@@ -153,7 +127,17 @@ func (th *Handler) Register(impl interface{}) {
 }
 func (th *Handler) Handle(method string, v []reflect.Value) ([]reflect.Value, error) {
 	if h, ok := th.h[method]; ok {
-		return h.Call(v), nil
+		return h.fn.Call(v), nil
 	}
 	return nil, fmt.Errorf("grpc lost method,%s", method)
+}
+
+func (th *Handler) GetHandlerValue(method string) *HandlerValue {
+	return th.h[method]
+}
+
+func (th *Handler) Foreach(cb func(name string, hd *HandlerValue)) {
+	for name, hd := range th.h {
+		cb(name, hd)
+	}
 }

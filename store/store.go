@@ -4,17 +4,15 @@ import (
 	"fmt"
 	"io"
 	"net"
-	"os"
-	"os/signal"
 	"path/filepath"
 	"sync"
 	"time"
 
-	"git.shiyou.kingsoft.com/wangxu13/ppx-app/inner"
+	"git.shiyou.kingsoft.com/infra/go-raft/inner"
 
 	"github.com/sirupsen/logrus"
 
-	"git.shiyou.kingsoft.com/wangxu13/ppx-app/common"
+	"git.shiyou.kingsoft.com/infra/go-raft/common"
 	"github.com/golang/protobuf/proto"
 
 	"github.com/hashicorp/raft"
@@ -24,6 +22,7 @@ import (
 const (
 	retainSnapshotCount = 2
 	raftTimeout         = 10 * time.Second
+	raftLogCacheSize    = 512
 )
 
 type ValueType interface{}
@@ -39,17 +38,30 @@ func GetApiKey(raftAddr string) string {
 	return "api-" + raftAddr
 }
 
+type raftServers []raft.Server
+
+func (th *raftServers) put(id, addr string) {
+	for i, s := range *th {
+		if s.ID == raft.ServerID(id) {
+			(*th)[i].Address = raft.ServerAddress(addr)
+			return
+		}
+	}
+	*th = append(*th, raft.Server{
+		ID:      raft.ServerID(id),
+		Address: raft.ServerAddress(addr),
+	})
+}
+
 type RaftStore struct {
-	RaftDir      string
-	RaftBindAddr string
-	ApiAddr      string
-	l            sync.RWMutex
+	config *common.Configure
+	l      sync.RWMutex
+	m      StoreType
 
-	storeInMem bool
-	m          StoreType
-
-	raft *raft.Raft
-
+	servers     raftServers
+	raft        *raft.Raft
+	raftStore   *raftboltdb.BoltStore
+	logStore    *LogStoreCache
 	OnStateChg  common.SafeEvent
 	OnLeaderChg common.SafeEvent
 	OnLeader    common.SafeEvent
@@ -59,16 +71,20 @@ type RaftStore struct {
 	peers sync.Map
 
 	runChan common.RunChanType
+
+	exitChan chan struct{}
+
+	goFunc common.GoFunc
 }
 
-func New(storeInMem bool, raftDir, raftAddr, apiAddr string, runChan common.RunChanType) *RaftStore {
+func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoFunc) *RaftStore {
 	return &RaftStore{
-		RaftDir:      raftDir,
-		RaftBindAddr: raftAddr,
-		ApiAddr:      apiAddr,
-		m:            make(StoreType),
-		storeInMem:   storeInMem,
-		runChan:      runChan,
+		config:   config,
+		m:        make(StoreType),
+		runChan:  runChan,
+		servers:  raftServers{},
+		goFunc:   goFunc,
+		exitChan: make(chan struct{}, 1),
 	}
 }
 func (th *RaftStore) apply(cmd *inner.ApplyCmd) raft.ApplyFuture {
@@ -115,7 +131,7 @@ func (th *RaftStore) Delete(key string) raft.ApplyFuture {
 
 //get real-time data
 func (th *RaftStore) GetAsync(key string, fn func(err error, valueType ValueType)) {
-	go func() {
+	th.goFunc.Go(func() {
 		cmd := &inner.ApplyCmd{
 			Cmd: inner.ApplyCmd_GET,
 			Obj: &inner.ApplyCmd_Get{Get: &inner.ApplyCmd_OpGet{Key: key}},
@@ -129,10 +145,10 @@ func (th *RaftStore) GetAsync(key string, fn func(err error, valueType ValueType
 		} else {
 			fn(err, f.Response())
 		}
-	}()
+	})
 }
 func (th *RaftStore) SetAsync(key string, valueType ValueType, fn func(err error, rsp interface{})) {
-	go func() {
+	th.goFunc.Go(func() {
 		f := th.Set(key, valueType)
 		err := f.Error()
 		if th.runChan != nil {
@@ -142,10 +158,10 @@ func (th *RaftStore) SetAsync(key string, valueType ValueType, fn func(err error
 		} else {
 			fn(err, f.Response())
 		}
-	}()
+	})
 }
 func (th *RaftStore) DeleteAsync(key string, fn func(err error, rsp interface{})) {
-	go func() {
+	th.goFunc.Go(func() {
 		f := th.Delete(key)
 		err := f.Error()
 		if th.runChan != nil {
@@ -155,7 +171,7 @@ func (th *RaftStore) DeleteAsync(key string, fn func(err error, rsp interface{})
 		} else {
 			fn(err, f.Response())
 		}
-	}()
+	})
 }
 func (th *RaftStore) Join(nodeId string, addr string, apiAddr string) error {
 	logrus.Infof("Join %s,%s", nodeId, addr)
@@ -179,9 +195,6 @@ func (th *RaftStore) Join(nodeId string, addr string, apiAddr string) error {
 	if err := f.Error(); err != nil {
 		return err
 	}
-	if err := th.SetApiAddr(addr, apiAddr); err != nil {
-		logrus.Infof("SetApiAddr failed,%s", err.Error())
-	}
 	logrus.Infof("join succeed")
 	return nil
 }
@@ -191,12 +204,12 @@ func (th *RaftStore) Apply(log *raft.Log) interface{} {
 		logrus.Infof("Apply error %s", err.Error())
 		return nil
 	}
-	//logrus.Infof("[Store]Apply %d", cmd.Cmd)
+	//logrus.Debugf("[Store][%s]Apply %d", th.config.NodeId, cmd.Cmd)
 	switch cmd.Cmd {
 	case inner.ApplyCmd_GET:
 		return th.applyGet(cmd.GetGet())
 	case inner.ApplyCmd_SET:
-		//logrus.Infof("[Store]Apply Set %s,%s", cmd.GetSet().Key, string(cmd.GetSet().Value))
+		common.Debugf("[Store][%s]Apply Set %s", th.config.NodeId, cmd.GetSet().Key)
 		return th.applySet(cmd.GetSet())
 	case inner.ApplyCmd_DEL:
 		return th.applyDel(cmd.GetDel())
@@ -221,7 +234,7 @@ func (th *RaftStore) applyDel(obj *inner.ApplyCmd_OpDel) interface{} {
 	return nil
 }
 func (th *RaftStore) Snapshot() (raft.FSMSnapshot, error) {
-	logrus.Infof("Snapshot")
+	logrus.Infof("[%s]Snapshot", th.config.NodeId)
 	th.l.RLock()
 	defer th.l.RUnlock()
 	sf := &storeFsmSnapshot{
@@ -231,7 +244,7 @@ func (th *RaftStore) Snapshot() (raft.FSMSnapshot, error) {
 	return sf, nil
 }
 func (th *RaftStore) Restore(rc io.ReadCloser) error {
-	logrus.Infof("Restore")
+	logrus.Infof("[%s]Restore", th.config.NodeId)
 	o := make(StoreType)
 	if err := common.DecodeFromReader(rc, &o); err != nil {
 		return err
@@ -240,35 +253,72 @@ func (th *RaftStore) Restore(rc io.ReadCloser) error {
 	return nil
 }
 
-func (th *RaftStore) Open(joinAddr string, localId string) error {
+func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	config := raft.DefaultConfig()
-	config.LocalID = raft.ServerID(localId)
-	//config.Logger = &raftLog{}
-	addr, err := net.ResolveTCPAddr("tcp", th.RaftBindAddr)
+	config.LocalID = raft.ServerID(th.config.NodeId)
+	config.LogOutput = logOutput
+	config.LogLevel = logLevel
+	//config.SnapshotInterval = 10 * time.Millisecond
+	addr, err := net.ResolveTCPAddr("tcp", th.config.RaftAddr)
 	if err != nil {
 		return err
 	}
-	transport, err := raft.NewTCPTransport(th.RaftBindAddr, addr, 3, raftTimeout, os.Stderr)
+
+	transport, err := raft.NewTCPTransport(th.config.RaftAddr, addr, 3, raftTimeout, logOutput)
 	if err != nil {
 		return err
 	}
 	th.transport = transport
-	snapshot, err := raft.NewFileSnapshotStore(th.RaftDir, retainSnapshotCount, os.Stderr)
 	if err != nil {
 		return err
 	}
 	var logStore raft.LogStore
 	var stableStore raft.StableStore
-	if th.storeInMem {
-		logStore = raft.NewInmemStore()
+	var snapshot raft.SnapshotStore
+	if th.config.StoreInMem {
+		if th.config.LogCacheCapacity > 0 {
+			if th.logStore, err = NewLogStoreCache(th.config.LogCacheCapacity, th.config.StoreDir); err != nil {
+				return fmt.Errorf("NewLogStoreCache err,%s", err)
+			}
+			logStore = th.logStore
+		} else {
+			logStore = raft.NewInmemStore()
+		}
 		stableStore = raft.NewInmemStore()
+		snapshot = raft.NewInmemSnapshotStore()
 	} else {
-		boltDB, err := raftboltdb.NewBoltStore(filepath.Join(th.RaftDir, "raft.db"))
+		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
+		if err != nil {
+			return fmt.Errorf("new snapshot store: %s", err)
+		}
+		boltDB, err := raftboltdb.NewBoltStore(filepath.Join(th.config.StoreDir, "log.db"))
 		if err != nil {
 			return fmt.Errorf("new bolt store: %s", err)
 		}
-		logStore = boltDB
+		th.raftStore = boltDB
+
+		cacheStore, err := raft.NewLogCache(raftLogCacheSize, boltDB)
+		if err != nil {
+			return err
+		}
+		logStore = cacheStore
 		stableStore = boltDB
+	}
+	//join self
+	th.servers.put(th.config.NodeId, th.config.RaftAddr)
+	if len(th.config.JoinAddr) == 0 && th.config.Bootstrap {
+		hasState, err := raft.HasExistingState(logStore, stableStore, snapshot)
+		if err != nil {
+			return err
+		}
+		if !hasState {
+			logrus.Infof("Start as BootstrapCluster")
+			if err := raft.BootstrapCluster(config, logStore, stableStore, snapshot, transport, raft.Configuration{
+				Servers: th.servers,
+			}); err != nil {
+				return err
+			}
+		}
 	}
 	ra, err := raft.NewRaft(config, th, logStore, stableStore, snapshot, transport)
 	if err != nil {
@@ -276,33 +326,16 @@ func (th *RaftStore) Open(joinAddr string, localId string) error {
 	}
 	th.raft = ra
 	th.runObserver()
-	//joinAddr为空说明第一个启动，一般就作为leader了，同一个cluster中后面的节点不能再以这个模式启动
-	if joinAddr == "" {
-		configuration := raft.Configuration{
-			Servers: []raft.Server{
-				{
-					ID:      config.LocalID,
-					Address: transport.LocalAddr(),
-				},
-			},
-		}
-		if err := ra.BootstrapCluster(configuration).Error(); err != nil {
-			logrus.Infof("maybe restart,%s\n", err.Error())
-		}
-	}
 	return nil
 }
-func (th *RaftStore) SetApiAddr(raftAddr, apiAddr string) error {
-	return th.Set(GetApiKey(raftAddr), apiAddr).Error()
+func (th *RaftStore) AddServer(id, addr string) {
+	th.servers.put(id, addr)
 }
-func (th *RaftStore) GetApiAddr(raftAddr string) (string, error) {
-	v, e := th.Get(GetApiKey(raftAddr))
-	if v == nil || e != nil {
-		return "", e
-	}
-	var apiAddr string
-	err := common.Decode(v.([]byte), &apiAddr)
-	return apiAddr, err
+func (th *RaftStore) BootStrap() error {
+	logrus.Infof("[%s]RaftStore,BootStrap", th.config.NodeId)
+	return th.raft.BootstrapCluster(raft.Configuration{
+		Servers: th.servers,
+	}).Error()
 }
 func (th *RaftStore) runObserver() {
 	obchan := make(chan raft.Observation, 1024)
@@ -311,24 +344,21 @@ func (th *RaftStore) runObserver() {
 	})
 	th.raft.GetConfiguration()
 	th.raft.RegisterObserver(obsrv)
-	go func() {
-		defer close(obchan)
-		terminate := make(chan os.Signal, 1)
-		defer close(terminate)
-		signal.Notify(terminate, os.Interrupt)
-		signal.Notify(terminate, os.Kill)
+	th.goFunc.Go(func() {
+		defer func() {
+			close(obchan)
+		}()
 		//observer,管道大小弄大点，不然投票容易超时，因为block为true时，channel处理不过来会造成投票的channel阻塞
-
 		for {
 			select {
 			case obs := <-obchan:
 				switch obs.Data.(type) {
 				case *raft.RequestVoteRequest:
 					ob := obs.Data.(*raft.RequestVoteRequest)
-					logrus.Infof("[Observer]RequestVoteRequest,%v", *ob)
+					logrus.Infof("[Observer][%s]RequestVoteRequest,%v", th.config.NodeId, *ob)
 				case raft.RaftState:
 					ob := obs.Data.(raft.RaftState)
-					logrus.Debugf("[Observer]RaftState,%v", ob)
+					logrus.Debugf("[Observer][%s]RaftState,%v", th.config.NodeId, ob)
 					if th.runChan != nil {
 						th.runChan <- func() {
 							th.OnStateChg.EmitSafe(ob)
@@ -338,7 +368,7 @@ func (th *RaftStore) runObserver() {
 					}
 				case raft.PeerObservation:
 					ob := obs.Data.(raft.PeerObservation)
-					logrus.Infof("[Observer]PeerObservation,%v", ob)
+					logrus.Infof("[Observer][%s]PeerObservation,%v", th.config.NodeId, ob)
 					if ob.Removed {
 						th.peers.Delete(ob.Peer.ID)
 					} else {
@@ -354,17 +384,11 @@ func (th *RaftStore) runObserver() {
 						} else {
 							th.OnLeaderChg.EmitSafe(string(ob.Leader))
 						}
-					} else {
-						if err := th.SetApiAddr(th.RaftBindAddr, th.ApiAddr); err != nil {
-							logrus.Infof("SetApiAddr error,%s\n", err.Error())
-						} else {
-							logrus.Infof("[Observer]SetApiAddr %s , %s\n", th.RaftBindAddr, th.ApiAddr)
-						}
 					}
-					logrus.Infof("[Observer]LeaderObservation,%v", ob)
+					logrus.Infof("[Observer][%s]LeaderObservation,%v", th.config.NodeId, ob)
 				}
 			case leader := <-th.raft.LeaderCh():
-				logrus.Info("[Leader] %v", leader)
+				logrus.Infof("[Leader] %v", leader)
 				if th.runChan != nil {
 					th.runChan <- func() {
 						th.OnLeader.EmitSafe(leader)
@@ -372,11 +396,12 @@ func (th *RaftStore) runObserver() {
 				} else {
 					th.OnLeader.EmitSafe(leader)
 				}
-			case <-terminate:
+			case <-th.exitChan:
+				logrus.Debugf("RaftStore.runObserver exit")
 				return
 			}
 		}
-	}()
+	})
 }
 
 func (th *RaftStore) IsLeader() bool {
@@ -385,9 +410,25 @@ func (th *RaftStore) IsLeader() bool {
 func (th *RaftStore) IsFollower() bool {
 	return th.raft.State() == raft.Follower
 }
-func (th *RaftStore) Release() {
-	th.transport.Close()
-	th.transport = nil
+func (th *RaftStore) release() {
+}
+func (th *RaftStore) Shutdown() {
+	if th.raft != nil {
+		th.transport.Close()
+		f := th.raft.Shutdown()
+		if e := f.Error(); e != nil {
+			logrus.Warn("shutdown raft err,%s", e.Error())
+		}
+		if th.exitChan != nil {
+			th.exitChan <- struct{}{}
+		}
+		if th.raftStore != nil {
+			th.raftStore.Close()
+		}
+		if th.logStore != nil {
+			th.logStore.Close()
+		}
+	}
 }
 
 type storeFsmSnapshot struct {

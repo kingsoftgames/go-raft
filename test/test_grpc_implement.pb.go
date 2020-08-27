@@ -5,7 +5,7 @@ package test
 import (
 	context "context"
 
-	app "git.shiyou.kingsoft.com/wangxu13/ppx-app/app"
+	app "git.shiyou.kingsoft.com/infra/go-raft/app"
 )
 
 // ImplementedTestServer  with app.

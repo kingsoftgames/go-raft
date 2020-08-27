@@ -2,8 +2,11 @@ package app
 
 import (
 	"flag"
+	"os"
+	"os/signal"
 	"strings"
-	"sync"
+
+	"git.shiyou.kingsoft.com/infra/go-raft/common"
 
 	"github.com/sirupsen/logrus"
 )
@@ -20,6 +23,10 @@ var realMain RealMain
 func (th *RealMain) run() {
 	if !flag.Parsed() {
 		flag.Parse()
+	}
+	if flag.Lookup("help") != nil {
+		flag.Usage()
+		os.Exit(0)
 	}
 	appV := make([]IApp, 0)
 	var configV []string = make([]string, 0)
@@ -40,16 +47,23 @@ func (th *RealMain) run() {
 			appV = append(appV, app)
 		}
 	}
-	var exitWait sync.WaitGroup
+	var exitWait common.GracefulExit
 	for i, app := range appV {
 		mainApp := NewMainApp(app, &exitWait)
 		if rst := mainApp.Init(configV[i]); rst != 0 {
 			logrus.Fatalf("Init Failed %s,%d", app, rst)
 		}
-		go func(a *MainApp) {
-			a.Start()
+		mainApp.Start()
+		s := make(chan os.Signal, 1)
+		signal.Notify(s, os.Kill, os.Interrupt)
+		go func(mainApp *MainApp) {
+			select {
+			case <-s:
+				mainApp.Stop()
+			}
 		}(mainApp)
 	}
+
 	exitWait.Wait()
 }
 func RunMain() {
@@ -58,5 +72,5 @@ func RunMain() {
 func init() {
 	appsNameFlag = flag.String("apps", "", "run app name ,if null ,run all which register")
 	configFile = flag.String("config", "", "config file path")
-
+	flag.String("help", "", "Print Usage")
 }
