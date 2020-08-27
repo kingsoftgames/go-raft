@@ -24,7 +24,7 @@ func (th *RealMain) run() {
 	if !flag.Parsed() {
 		flag.Parse()
 	}
-	if flag.Lookup("help") != nil {
+	if flag.Lookup("help") != nil || flag.Lookup("h") != nil{
 		flag.Usage()
 		os.Exit(0)
 	}
@@ -72,5 +72,4 @@ func RunMain() {
 func init() {
 	appsNameFlag = flag.String("apps", "", "run app name ,if null ,run all which register")
 	configFile = flag.String("config", "", "config file path")
-	flag.String("help", "", "Print Usage")
 }

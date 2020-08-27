@@ -62,6 +62,8 @@ func NewDefaultConfigure() *Configure {
 		Bootstrap:        true,
 		BootstrapExpect:  0,
 	}
+	trimConfigureFromFlag(config)
+	trimConfigByShift(config)
 	return config
 }
 func trimConfigByShift(config *Configure) {
