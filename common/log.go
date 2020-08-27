@@ -7,7 +7,13 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync"
 
+	"github.com/gin-gonic/gin"
+
+	"github.com/orandin/lumberjackrus"
+
+	_ "github.com/orandin/lumberjackrus"
 	"github.com/sirupsen/logrus"
 )
 
@@ -89,8 +95,104 @@ func newTextFormat(color bool) *textFormat {
 		forceColors: color,
 	}
 }
-func InitLog() {
-	logrus.SetLevel(logrus.DebugLevel)
-	logrus.SetOutput(os.Stdout)
-	logrus.SetFormatter(newTextFormat(true))
+
+var once sync.Once
+
+func InitLog(config *LogConfigure) {
+	once.Do(func() {
+		gin.DefaultWriter = NewFileLog(config, "gin")
+		gin.DefaultErrorWriter = NewFileLog(config, "gin_err")
+		level, err := logrus.ParseLevel(config.Level)
+		if err != nil {
+			level = logrus.InfoLevel
+		}
+		logrus.SetLevel(level)
+		logrus.SetOutput(os.Stdout)
+		logrus.SetFormatter(newTextFormat(true))
+		addFileHook(config)
+	})
+}
+
+func addFileHook(config *LogConfigure) error {
+	level, err := logrus.ParseLevel(config.Level)
+	if err != nil {
+		level = logrus.InfoLevel
+	}
+	hook, err := lumberjackrus.NewHook(
+		&lumberjackrus.LogFile{
+			Filename:  fmt.Sprintf("%s/info.log", config.Path),
+			MaxAge:    config.MaxAge,
+			MaxSize:   config.MaxSize,
+			Compress:  config.Compress,
+			LocalTime: false,
+		},
+		level,
+		&logrus.JSONFormatter{},
+		&lumberjackrus.LogFileOpts{
+			logrus.ErrorLevel: &lumberjackrus.LogFile{
+				Filename:  fmt.Sprintf("%s/error.log", config.Path),
+				MaxAge:    config.MaxAge,
+				MaxSize:   config.MaxSize,
+				Compress:  config.Compress,
+				LocalTime: false,
+			},
+			logrus.FatalLevel: &lumberjackrus.LogFile{
+				Filename:  fmt.Sprintf("%s/fatal.log", config.Path),
+				MaxAge:    config.MaxAge,
+				MaxSize:   config.MaxSize,
+				Compress:  config.Compress,
+				LocalTime: false,
+			},
+		},
+	)
+	if err != nil {
+		return err
+	}
+	logrus.AddHook(hook)
+	return nil
+}
+
+type LogFileWrite struct {
+	logger *logrus.Logger
+}
+
+func (th *LogFileWrite) Write(p []byte) (n int, err error) {
+	th.logger.Info(string(p))
+	return 0, nil
+}
+
+func NewFileLog(config *LogConfigure, name string) *LogFileWrite {
+	l := &LogFileWrite{}
+	l.logger = logrus.New()
+	hook, err := lumberjackrus.NewHook(
+		&lumberjackrus.LogFile{
+			Filename:  fmt.Sprintf("%s/%s.log", config.Path, name),
+			MaxAge:    config.MaxAge,
+			MaxSize:   config.MaxSize,
+			Compress:  config.Compress,
+			LocalTime: false,
+		},
+		logrus.DebugLevel,
+		&logrus.JSONFormatter{},
+		nil,
+	)
+	if err != nil {
+		return nil
+	}
+	l.logger.AddHook(hook)
+	return l
+}
+
+var debugLog = false
+
+func IsOpenDebugLog() bool {
+	return debugLog
+}
+func OpenDebugLog() {
+	debugLog = true
+}
+func Debugf(msg string, args ...interface{}) {
+	if debugLog {
+		logrus.Debugf(msg, args...)
+	}
 }

@@ -1,4 +1,4 @@
-module git.shiyou.kingsoft.com/wangxu13/ppx-app/cmd/protoc-gen-ppx
+module git.shiyou.kingsoft.com/infra/go-raft/cmd/protoc-gen-ppx
 
 go 1.14
 

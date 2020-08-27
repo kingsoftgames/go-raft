@@ -3,7 +3,6 @@ package store
 import (
 	"io"
 	"log"
-	"os"
 
 	"github.com/sirupsen/logrus"
 
@@ -11,18 +10,38 @@ import (
 )
 
 type raftLog struct {
+	implied []interface{}
+	name    string
+}
+
+func newRaftLog() *raftLog {
+	return &raftLog{
+		implied: []interface{}{},
+		name:    "",
+	}
 }
 
 func (th *raftLog) Log(level hclog.Level, msg string, args ...interface{}) {
-	panic("implement me")
+	switch level {
+	case hclog.NoLevel, hclog.Trace:
+		th.Trace(msg, args...)
+	case hclog.Debug:
+		th.Debug(msg, args...)
+	case hclog.Info:
+		th.Info(msg, args...)
+	case hclog.Warn:
+		th.Warn(msg, args...)
+	case hclog.Error:
+		th.Error(msg, args...)
+	}
 }
 
 func (th *raftLog) ImpliedArgs() []interface{} {
-	panic("implement me")
+	return th.implied
 }
 
 func (th *raftLog) Name() string {
-	panic("implement me")
+	return th.name
 }
 
 func (th *raftLog) Trace(msg string, args ...interface{}) {
@@ -74,5 +93,5 @@ func (th *raftLog) StandardLogger(opts *hclog.StandardLoggerOptions) *log.Logger
 	return log.New(th.StandardWriter(opts), "", 0)
 }
 func (th *raftLog) StandardWriter(opts *hclog.StandardLoggerOptions) io.Writer {
-	return os.Stdout
+	return logrus.StandardLogger().Out
 }

@@ -19,7 +19,10 @@ const _ = grpc.SupportPackageIsVersion6
 type RaftClient interface {
 	// Sends a Join Request
 	JoinRequest(ctx context.Context, in *JoinReq, opts ...grpc.CallOption) (*JoinRsp, error)
+	SynMember(ctx context.Context, in *SynMemberReq, opts ...grpc.CallOption) (*SynMemberRsp, error)
 	TransHttpRequest(ctx context.Context, in *TransHttpReq, opts ...grpc.CallOption) (*TransHttpRsp, error)
+	TransGrpcRequest(ctx context.Context, in *TransGrpcReq, opts ...grpc.CallOption) (*TransGrpcRsp, error)
+	HealthRequest(ctx context.Context, in *HealthReq, opts ...grpc.CallOption) (*HealthRsp, error)
 }
 
 type raftClient struct {
@@ -39,9 +42,36 @@ func (c *raftClient) JoinRequest(ctx context.Context, in *JoinReq, opts ...grpc.
 	return out, nil
 }
 
+func (c *raftClient) SynMember(ctx context.Context, in *SynMemberReq, opts ...grpc.CallOption) (*SynMemberRsp, error) {
+	out := new(SynMemberRsp)
+	err := c.cc.Invoke(ctx, "/inner.Raft/SynMember", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 func (c *raftClient) TransHttpRequest(ctx context.Context, in *TransHttpReq, opts ...grpc.CallOption) (*TransHttpRsp, error) {
 	out := new(TransHttpRsp)
 	err := c.cc.Invoke(ctx, "/inner.Raft/TransHttpRequest", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftClient) TransGrpcRequest(ctx context.Context, in *TransGrpcReq, opts ...grpc.CallOption) (*TransGrpcRsp, error) {
+	out := new(TransGrpcRsp)
+	err := c.cc.Invoke(ctx, "/inner.Raft/TransGrpcRequest", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *raftClient) HealthRequest(ctx context.Context, in *HealthReq, opts ...grpc.CallOption) (*HealthRsp, error) {
+	out := new(HealthRsp)
+	err := c.cc.Invoke(ctx, "/inner.Raft/HealthRequest", in, out, opts...)
 	if err != nil {
 		return nil, err
 	}
@@ -54,7 +84,10 @@ func (c *raftClient) TransHttpRequest(ctx context.Context, in *TransHttpReq, opt
 type RaftServer interface {
 	// Sends a Join Request
 	JoinRequest(context.Context, *JoinReq) (*JoinRsp, error)
+	SynMember(context.Context, *SynMemberReq) (*SynMemberRsp, error)
 	TransHttpRequest(context.Context, *TransHttpReq) (*TransHttpRsp, error)
+	TransGrpcRequest(context.Context, *TransGrpcReq) (*TransGrpcRsp, error)
+	HealthRequest(context.Context, *HealthReq) (*HealthRsp, error)
 	mustEmbedUnimplementedRaftServer()
 }
 
@@ -65,8 +98,17 @@ type UnimplementedRaftServer struct {
 func (*UnimplementedRaftServer) JoinRequest(context.Context, *JoinReq) (*JoinRsp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method JoinRequest not implemented")
 }
+func (*UnimplementedRaftServer) SynMember(context.Context, *SynMemberReq) (*SynMemberRsp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method SynMember not implemented")
+}
 func (*UnimplementedRaftServer) TransHttpRequest(context.Context, *TransHttpReq) (*TransHttpRsp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method TransHttpRequest not implemented")
+}
+func (*UnimplementedRaftServer) TransGrpcRequest(context.Context, *TransGrpcReq) (*TransGrpcRsp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method TransGrpcRequest not implemented")
+}
+func (*UnimplementedRaftServer) HealthRequest(context.Context, *HealthReq) (*HealthRsp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method HealthRequest not implemented")
 }
 func (*UnimplementedRaftServer) mustEmbedUnimplementedRaftServer() {}
 
@@ -92,6 +134,24 @@ func _Raft_JoinRequest_Handler(srv interface{}, ctx context.Context, dec func(in
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Raft_SynMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SynMemberReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).SynMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inner.Raft/SynMember",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).SynMember(ctx, req.(*SynMemberReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 func _Raft_TransHttpRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
 	in := new(TransHttpReq)
 	if err := dec(in); err != nil {
@@ -110,6 +170,42 @@ func _Raft_TransHttpRequest_Handler(srv interface{}, ctx context.Context, dec fu
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Raft_TransGrpcRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(TransGrpcReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).TransGrpcRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inner.Raft/TransGrpcRequest",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).TransGrpcRequest(ctx, req.(*TransGrpcReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _Raft_HealthRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(HealthReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).HealthRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inner.Raft/HealthRequest",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).HealthRequest(ctx, req.(*HealthReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Raft_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inner.Raft",
 	HandlerType: (*RaftServer)(nil),
@@ -119,8 +215,20 @@ var _Raft_serviceDesc = grpc.ServiceDesc{
 			Handler:    _Raft_JoinRequest_Handler,
 		},
 		{
+			MethodName: "SynMember",
+			Handler:    _Raft_SynMember_Handler,
+		},
+		{
 			MethodName: "TransHttpRequest",
 			Handler:    _Raft_TransHttpRequest_Handler,
+		},
+		{
+			MethodName: "TransGrpcRequest",
+			Handler:    _Raft_TransGrpcRequest_Handler,
+		},
+		{
+			MethodName: "HealthRequest",
+			Handler:    _Raft_HealthRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},
