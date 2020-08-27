@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"reflect"
 	"strings"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -24,7 +25,7 @@ func (th *RealMain) run() {
 	if !flag.Parsed() {
 		flag.Parse()
 	}
-	if flag.Lookup("help") != nil || flag.Lookup("h") != nil{
+	if flag.Lookup("help") != nil || flag.Lookup("h") != nil {
 		flag.Usage()
 		os.Exit(0)
 	}
@@ -51,7 +52,7 @@ func (th *RealMain) run() {
 	for i, app := range appV {
 		mainApp := NewMainApp(app, &exitWait)
 		if rst := mainApp.Init(configV[i]); rst != 0 {
-			logrus.Fatalf("Init Failed %s,%d", app, rst)
+			logrus.Fatalf("Init Failed %s,%d", reflect.TypeOf(app).String(), rst)
 		}
 		mainApp.Start()
 		s := make(chan os.Signal, 1)

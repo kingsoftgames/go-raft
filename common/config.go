@@ -1,7 +1,10 @@
 package common
 
 import (
+	"bufio"
+	"bytes"
 	"flag"
+	"fmt"
 	"io/ioutil"
 	"reflect"
 	"strconv"
@@ -40,6 +43,7 @@ type Configure struct {
 	NodeId           string        `yaml:"node_id"`
 	JoinAddr         string        `yaml:"join_addr"`
 	TryJoinTime      int           `yaml:"try_join_time"`
+	JoinFile         string        `yaml:"join_file"`
 	ConnectTimeoutMs int           `yaml:"connect_timeout_ms"` //连接超时（毫秒）
 	Bootstrap        bool          `yaml:"bootstrap"`
 	BootstrapExpect  int           `yaml:"bootstrap_expect"`
@@ -57,13 +61,13 @@ func NewDefaultConfigure() *Configure {
 		PortShift:        0,
 		NodeId:           "",
 		JoinAddr:         "",
+		JoinFile:         "",
 		TryJoinTime:      3,
 		ConnectTimeoutMs: 100,
 		Bootstrap:        true,
 		BootstrapExpect:  0,
 	}
-	trimConfigureFromFlag(config)
-	trimConfigByShift(config)
+	trim(config)
 	return config
 }
 func trimConfigByShift(config *Configure) {
@@ -80,13 +84,34 @@ func trimConfigByShift(config *Configure) {
 		}
 	}
 }
+func trimConfigJoinFile(config *Configure) {
+	if len(config.JoinFile) > 0 {
+		if b, err := ioutil.ReadFile(config.JoinFile); err != nil {
+			logrus.Fatalf("trimConfigJoinFile,err,%s,%s", config.JoinFile, err.Error())
+		} else {
+			config.JoinAddr = ""
+			r := bufio.NewReader(bytes.NewBuffer(b))
+			for line, _, _ := r.ReadLine(); line != nil; line, _, _ = r.ReadLine() {
+				if len(config.JoinAddr) == 0 {
+					config.JoinAddr = string(line)
+				} else {
+					config.JoinAddr = fmt.Sprintf("%s,%s", config.JoinAddr, string(line))
+				}
+			}
+		}
+	}
+}
+func trim(config *Configure) {
+	trimConfigureFromFlag(config)
+	trimConfigByShift(config)
+	trimConfigJoinFile(config)
+}
 func InitConfigure(content []byte) (config *Configure) {
 	config = NewDefaultConfigure()
 	if err := yaml.Unmarshal(content, config); err != nil {
 		logrus.Fatal("initConfigure yaml.Unmarshal err, ", err.Error())
 	}
-	trimConfigureFromFlag(config)
-	trimConfigByShift(config)
+	trim(config)
 	return config
 }
 func InitConfigureFromFile(file string) *Configure {
@@ -111,6 +136,7 @@ var portShift *int
 var nodeId *string
 var joinAddr *string
 var tryJoinTime *int
+var joinFile *string
 var connectTimeoutMs *int
 var bootstrap *bool
 var bootstrapExpect *int
@@ -139,6 +165,8 @@ func trimConfigureFromFlag(config *Configure) {
 			config.JoinAddr = *joinAddr
 		case "try_join_time":
 			config.TryJoinTime = *tryJoinTime
+		case "join_file":
+			config.JoinFile = *joinFile
 		case "con_timeout_ms":
 			config.ConnectTimeoutMs = *connectTimeoutMs
 		case "bootstrap":
@@ -162,6 +190,7 @@ func init() {
 	nodeId = flag.String("node_id", "", "nodeId for raft")
 	joinAddr = flag.String("join_addr", "", "addr for join raft leader node")
 	tryJoinTime = flag.Int("try_join_time", 0, "try join time")
+	joinFile = flag.String("join_file", "", "if len(join_file)!=0 join addr provide from file name")
 	connectTimeoutMs = flag.Int("con_timeout_ms", 0, "timeout ms for connect")
 	bootstrap = flag.Bool("bootstrap", false, "start as bootstrap( as leader)")
 	bootstrapExpect = flag.Int("bootstrap_expect", 0, "node num expect")
