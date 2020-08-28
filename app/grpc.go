@@ -136,7 +136,7 @@ func (th *Service) Start() error {
 
 	//register health
 	th.health = health.NewServer()
-	th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
+	//th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
 	healthgrpc.RegisterHealthServer(th.GetGrpcServer(), th.health)
 
 	th.store.OnStateChg.Add(func(i interface{}) {
