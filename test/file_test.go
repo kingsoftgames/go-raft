@@ -15,17 +15,18 @@ import (
 
 func Test_FileWatch(t *testing.T) {
 	exit := make(chan struct{})
-	file := "filewatch"
+	file := "cache/filewatch"
 	ioutil.WriteFile(file, []byte("init"), os.ModePerm)
-	common.AddWatch("filewatch", func(name string) {
+	var watch common.FileWatch
+	watch.Add(file, func(name string) {
 		content, _ := ioutil.ReadFile(name)
 		logrus.Infof("filewatch %s,%s", name, string(content))
 		if string(content) == "exit" {
-			common.StopWatch()
+			watch.Stop()
 			exit <- struct{}{}
 		}
 	})
-	common.StartWatch()
+	watch.Start()
 	ioutil.WriteFile(file, []byte("begin"), os.ModePerm)
 	time.Sleep(1 * time.Second)
 	ioutil.WriteFile(file, []byte("exit"), os.ModePerm)

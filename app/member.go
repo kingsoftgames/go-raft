@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -17,25 +18,27 @@ type Member struct {
 	RaftAddr       string
 	GrpcAddr       string
 	State          int
-	Con            *innerGRpcClient
+	Con            *InnerCon
 	LastHealthTime int64
-	OverTimeCnt    int
+	OverTimeCnt    int32
 }
 
 func (th *Member) Health(health bool) {
 	if health {
-		th.LastHealthTime = time.Now().Unix()
-		th.OverTimeCnt = 0
+		atomic.StoreInt64(&th.LastHealthTime, time.Now().Unix())
+		atomic.StoreInt32(&th.OverTimeCnt, 0)
 	} else {
-		th.OverTimeCnt++
+		atomic.AddInt32(&th.OverTimeCnt, 1)
 	}
 }
 
 type MemberList struct {
 	l          sync.RWMutex
 	selfNodeId string
-	mem        map[string]*Member
-	addrMap    map[string]string
+
+	mem         map[string]*Member
+	raftAddrMap map[string]string
+	grpcAddrMap map[string]string
 
 	OnConEvent common.SafeEvent
 }
@@ -52,13 +55,24 @@ func (th *MemberList) Foreach(cb func(member *Member)) {
 		cb(m)
 	}
 }
-func (th *MemberList) GetByAddr(addr string) *Member {
-	if th.addrMap == nil {
+func (th *MemberList) GetByRaftAddr(addr string) *Member {
+	if th.raftAddrMap == nil {
 		return nil
 	}
 	th.l.RLock()
 	defer th.l.RUnlock()
-	if id, ok := th.addrMap[addr]; ok {
+	if id, ok := th.raftAddrMap[addr]; ok {
+		return th.mem[id]
+	}
+	return nil
+}
+func (th *MemberList) GetByGrpcAddr(addr string) *Member {
+	if th.grpcAddrMap == nil {
+		return nil
+	}
+	th.l.RLock()
+	defer th.l.RUnlock()
+	if id, ok := th.grpcAddrMap[addr]; ok {
 		return th.mem[id]
 	}
 	return nil
@@ -76,30 +90,40 @@ func (th *MemberList) Add(m *Member) error {
 	defer th.l.Unlock()
 	if th.mem == nil {
 		th.mem = map[string]*Member{}
-		th.addrMap = map[string]string{}
+		th.raftAddrMap = map[string]string{}
+		th.grpcAddrMap = map[string]string{}
 	}
 	if _, ok := th.mem[m.NodeId]; ok {
+		//if m.OverTimeCnt > 0 {
+		//	if err := m.Con.ReConnect(m.GrpcAddr); err != nil {
+		//		return err
+		//	}
+		//}
 		return nil
 	}
 	if th.selfNodeId != m.NodeId { //not need connect self node
-		m.Con = NewInnerGRpcClient(2000)
-		if err := m.Con.Connect(m.GrpcAddr); err != nil {
-			return err
-		}
-		th.OnConEvent.Emit(m)
+		m.Con = NewInnerCon(m.GrpcAddr, poolMaxConnect, grpcTimeoutMs)
+		//if err := m.Con.Connect(m.GrpcAddr); err != nil {
+		//	return err
+		//}
+		//th.OnConEvent.Emit(m)
 	}
 	th.mem[m.NodeId] = m
-	th.addrMap[m.RaftAddr] = m.NodeId
+	th.raftAddrMap[m.RaftAddr] = m.NodeId
+	th.grpcAddrMap[m.GrpcAddr] = m.NodeId
 	return nil
 }
 func (th *MemberList) Remove(nodeId string) {
 	m := th.Get(nodeId)
 	if m != nil {
-		m.Con.Stop()
+		if m.Con != nil {
+			m.Con.Close()
+		}
 		th.l.Lock()
 		defer th.l.Unlock()
 		delete(th.mem, nodeId)
-		delete(th.addrMap, m.RaftAddr)
+		delete(th.raftAddrMap, m.RaftAddr)
+		delete(th.grpcAddrMap, m.GrpcAddr)
 	}
 }
 func (th *MemberList) SynMemberToAll(bootstrap bool, bootstrapExpect int) error {
@@ -122,14 +146,16 @@ func (th *MemberList) SynMemberToAll(bootstrap bool, bootstrapExpect int) error 
 		if th.selfNodeId == m.NodeId {
 			continue
 		}
-		rsp, err := m.Con.GetClient().SynMember(ctx, msg)
-		if err != nil {
-			logrus.Errorf("MemberList,Syn,error,%s,%s", m.NodeId, err.Error())
-			continue
-		}
-		if rsp.Result != 0 {
-			logrus.Errorf("MemberList,Syn,failed,%s,%d", m.NodeId, rsp.Result)
-		}
+		m.Con.GetRaftClient(func(client inner.RaftClient) {
+			if client != nil {
+				rsp, err := client.SynMember(ctx, msg)
+				if err != nil {
+					logrus.Errorf("[%s]MemberList,Syn,error,%s,%s", th.selfNodeId, m.NodeId, err.Error())
+				} else if rsp.Result != 0 {
+					logrus.Errorf("[%s]MemberList,Syn,failed,%s,%d", th.selfNodeId, m.NodeId, rsp.Result)
+				}
+			}
+		})
 	}
 	return nil
 }
