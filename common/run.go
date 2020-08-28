@@ -39,6 +39,9 @@ func (th *LogicChan) Init(maxChan int, goFunc GoFunc) {
 func (th *LogicChan) Get() RunChanType {
 	return th.runChan[0]
 }
+func (th *LogicChan) HandleNoHash(h func()) {
+	th.Handle(0, h)
+}
 func (th *LogicChan) HandleWithHash(hash string, h func()) {
 	hs := fnv.New32()
 	_, _ = hs.Write([]byte(hash))

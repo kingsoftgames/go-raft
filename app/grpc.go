@@ -57,7 +57,7 @@ func (th *GRpcClient) Connect(addr string) error {
 	logrus.Infof("[GrpcClient]Connect Succeed,%s", addr)
 	return nil
 }
-func (th *GRpcClient) Stop() {
+func (th *GRpcClient) Close() {
 	th.l.Lock()
 	defer th.l.Unlock()
 	if th.con != nil {
@@ -68,11 +68,7 @@ func (th *GRpcClient) Stop() {
 }
 func (th *GRpcClient) ReConnect(addr string) error {
 	logrus.Infof("[GrpcClient]ReConnect %s, %s", th.addr, addr)
-	if addr == th.addr {
-		logrus.Infof("Reconnect same addr %s\n", addr)
-		return nil
-	}
-	th.Stop()
+	th.Close()
 	return th.Connect(addr)
 }
 func (th *GRpcClient) Get() interface{} {
@@ -83,6 +79,7 @@ func (th *GRpcClient) Get() interface{} {
 
 type innerGRpcClient struct {
 	GRpcClient
+	Idx int
 }
 
 func NewInnerGRpcClient(conTimeout int) *innerGRpcClient {
@@ -101,7 +98,7 @@ type Service struct {
 	ln        net.Listener
 	server    *grpc.Server
 	store     *store.RaftStore
-	client    *innerGRpcClient
+	client    *InnerCon
 	logicChan chan *ReplyFuture
 
 	mainApp *MainApp
@@ -154,7 +151,7 @@ func (th *Service) Start() error {
 		if len(i.(string)) == 0 {
 			return
 		}
-		if m := th.mainApp.members.GetByAddr(i.(string)); m != nil {
+		if m := th.mainApp.members.GetByRaftAddr(i.(string)); m != nil {
 			logrus.Debugf("Leader Chg %s", i.(string))
 			th.l.Lock()
 			th.client = m.Con
@@ -183,11 +180,8 @@ func (th *Service) IsFollower() bool {
 	return th.store.IsFollower()
 }
 
-func (th *Service) GetInner() inner.RaftClient {
+func (th *Service) GetInner() *InnerCon {
 	th.l.RLock()
 	defer th.l.RUnlock()
-	if th.client != nil {
-		return th.client.GetClient()
-	}
-	return nil
+	return th.client
 }

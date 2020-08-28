@@ -86,25 +86,33 @@ func trimConfigByShift(config *Configure) {
 }
 func trimConfigJoinFile(config *Configure) {
 	if len(config.JoinFile) > 0 {
-		if b, err := ioutil.ReadFile(config.JoinFile); err != nil {
+		addr, err := ReadJoinAddr(config.JoinFile)
+		if err != nil {
 			logrus.Fatalf("trimConfigJoinFile,err,%s,%s", config.JoinFile, err.Error())
-		} else {
-			config.JoinAddr = ""
-			r := bufio.NewReader(bytes.NewBuffer(b))
-			for line, _, _ := r.ReadLine(); line != nil; line, _, _ = r.ReadLine() {
-				if len(config.JoinAddr) == 0 {
-					config.JoinAddr = string(line)
-				} else {
-					config.JoinAddr = fmt.Sprintf("%s,%s", config.JoinAddr, string(line))
-				}
+		}
+		config.JoinAddr = addr
+	}
+}
+func ReadJoinAddr(fileName string) (string, error) {
+	addr := ""
+	if b, err := ioutil.ReadFile(fileName); err != nil {
+		return "", err
+	} else {
+		r := bufio.NewReader(bytes.NewBuffer(b))
+		for line, _, _ := r.ReadLine(); line != nil; line, _, _ = r.ReadLine() {
+			if len(addr) == 0 {
+				addr = string(line)
+			} else {
+				addr = fmt.Sprintf("%s,%s", addr, string(line))
 			}
 		}
 	}
+	return addr, nil
 }
 func trim(config *Configure) {
 	trimConfigureFromFlag(config)
 	trimConfigByShift(config)
-	trimConfigJoinFile(config)
+	//trimConfigJoinFile(config)
 }
 func InitConfigure(content []byte) (config *Configure) {
 	config = NewDefaultConfigure()

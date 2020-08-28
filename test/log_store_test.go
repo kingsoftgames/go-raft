@@ -38,7 +38,7 @@ func Test_LogStore(t *testing.T) {
 }
 func Test_logStoreCrashRestore(t *testing.T) {
 	store.OpenLogStoreDebugCrash()
-	common.OpenDebugLog()
+	//common.OpenDebugLog()
 	logCacheCapacity = 10
-	crash(t, 12)
+	crash(t, 3, 12)
 }

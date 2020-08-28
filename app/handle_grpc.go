@@ -2,6 +2,9 @@ package app
 
 import (
 	"context"
+	"time"
+
+	"git.shiyou.kingsoft.com/infra/go-raft/common"
 
 	"github.com/sirupsen/logrus"
 
@@ -66,9 +69,12 @@ func (th *RaftServerGRpc) TransGrpcRequest(ctx context.Context, req *inner.Trans
 	return rsp, err
 }
 func (th *RaftServerGRpc) HealthRequest(ctx context.Context, req *inner.HealthReq) (*inner.HealthRsp, error) {
-	//logrus.Debugf("[%s]HealthRequest,%v", th.App.config.NodeId, *req)
+	common.Debugf("[%s]HealthRequest from [%s],%d", th.App.config.NodeId, req.NodeId, (time.Now().UnixNano()-req.SendTime)/1e6)
 	if err := th.App.OnlyJoin(req.NodeId, req.Addr, req.ApiAddr); err != nil {
 		logrus.Errorf("[%s]HealthRequest,%v", th.App.config.NodeId, *req)
 	}
-	return &inner.HealthRsp{}, nil
+	return &inner.HealthRsp{
+		RecvTime: req.SendTime,
+		SendTime: time.Now().UnixNano(),
+	}, nil
 }

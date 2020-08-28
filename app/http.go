@@ -125,13 +125,25 @@ func (th *httpApi) post(path string, hd *HandlerValue) {
 			if hash := ctx.Request.Header.Get("hash"); len(hash) > 0 {
 				req.Hash = hash
 			}
-			c, _ := context.WithTimeout(ctx, grpcTimeoutMs*time.Millisecond)
-			rsp, e := th.mainApp.service.GetInner().TransHttpRequest(c, req)
-			if e == nil {
-				ctx.Data(200, sContentType, rsp.Data)
-			} else {
-				ctx.JSON(403, newErr("transfer leader err "+e.Error()))
+			con := th.mainApp.service.GetInner()
+			if con == nil {
+				ctx.JSON(403, newErr("can not work"))
+				return
 			}
+			con.GetRaftClient(func(client inner.RaftClient) {
+				if client == nil {
+					ctx.JSON(403, newErr("can not work"))
+					return
+				}
+				_ctx, _ := context.WithTimeout(ctx, grpcTimeoutMs*time.Millisecond)
+				rsp, e := client.TransHttpRequest(_ctx, req)
+				if e == nil {
+					ctx.Data(200, sContentType, rsp.Data)
+				} else {
+					ctx.JSON(403, newErr("transfer leader err "+e.Error()))
+				}
+			})
+
 		} else {
 			ctx.JSON(403, newErr("invalid node Candidate"))
 		}

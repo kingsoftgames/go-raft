@@ -69,9 +69,12 @@ func clusterAppCrash(t *testing.T, nodeNum int, clientFunc func([]*app.MainApp))
 	}
 }
 
-func crash(t *testing.T, count int) {
-	clusterAppCrash(t, 3, func(apps []*app.MainApp) {
-		c := []*testGRpcClient{newClient("127.0.0.1:18310"), newClient("127.0.0.1:18311"), newClient("127.0.0.1:18312")}
+func crash(t *testing.T, node int, count int) {
+	clusterAppCrash(t, node, func(apps []*app.MainApp) {
+		var c = make([]*testGRpcClient, 0)
+		for i := 0; i < node; i++ {
+			c = append(c, newClient(fmt.Sprintf("127.0.0.1:%d", 18310+i)))
+		}
 		var w sync.WaitGroup
 		w.Add(count)
 		for i := 0; i < count; i++ {
@@ -99,18 +102,18 @@ func crash(t *testing.T, count int) {
 					common.NewTimer(3*time.Second, func() {
 						t.Logf("[n%d] Begin Stop", i)
 						a.Stop()
-						time.Sleep(10 * time.Second)
-						var w sync.WaitGroup
-						w.Add(count)
-						for i := 0; i < count; i++ {
-							go func(idx int) {
-								defer w.Done()
-								key := strconv.Itoa(rand.Int())
-								runClient(t, c[idx%len(c)], "set", key, 1, true)
-								//runClient(t, c[idx%len(c)], "set", key, 1, true)
-							}(i)
-						}
-						w.Wait()
+						//time.Sleep(5 * time.Second)
+						//var w sync.WaitGroup
+						//w.Add(count)
+						//for i := 0; i < count; i++ {
+						//	go func(idx int) {
+						//		defer w.Done()
+						//		key := strconv.Itoa(rand.Int())
+						//		runClient(t, c[idx%len(c)], "set", key, 1, true)
+						//		//runClient(t, c[idx%len(c)], "set", key, 1, true)
+						//	}(i)
+						//}
+						//w.Wait()
 
 						common.NewTimer(5*time.Second, func() {
 							t.Logf("[n%d] Test_CrashVoter Restart ", i)
@@ -139,5 +142,5 @@ func crash(t *testing.T, count int) {
 }
 
 func Test_CrashVoter(t *testing.T) {
-	crash(t, 50)
+	crash(t, 3, 50)
 }
