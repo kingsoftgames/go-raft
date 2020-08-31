@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"reflect"
+	"strings"
 	"time"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/inner"
@@ -44,7 +45,7 @@ func (th *httpApi) init(addr string) {
 		}
 	})
 	th.mainApp.handler.Foreach(func(name string, hd *HandlerValue) {
-		th.post("/"+name, hd)
+		th.post("/"+strings.ReplaceAll(name, ".", "/"), hd)
 	})
 	//for path := range th.h.GetHandleMap() {
 	//	th.Post(path)
