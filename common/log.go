@@ -149,7 +149,24 @@ func addFileHook(config *LogConfigure) error {
 		return err
 	}
 	logrus.AddHook(hook)
+	logrus.AddHook(&StdErrHook{})
 	return nil
+}
+
+type StdErrHook struct {
+	format logrus.JSONFormatter
+}
+
+func (th *StdErrHook) Levels() []logrus.Level {
+	return []logrus.Level{logrus.ErrorLevel}
+}
+func (th *StdErrHook) Fire(entry *logrus.Entry) error {
+	msg, err := th.format.Format(entry)
+	if err != nil {
+		return err
+	}
+	_, err = os.Stderr.Write(msg)
+	return err
 }
 
 type LogFileWrite struct {
@@ -164,6 +181,7 @@ func (th *LogFileWrite) Write(p []byte) (n int, err error) {
 func NewFileLog(config *LogConfigure, name string) *LogFileWrite {
 	l := &LogFileWrite{}
 	l.logger = logrus.New()
+	l.logger.SetOutput(os.Stdout)
 	hook, err := lumberjackrus.NewHook(
 		&lumberjackrus.LogFile{
 			Filename:  fmt.Sprintf("%s/%s.log", config.Path, name),
