@@ -111,6 +111,7 @@ func (th *MemberList) Add(m *Member) error {
 	th.mem[m.NodeId] = m
 	th.raftAddrMap[m.RaftAddr] = m.NodeId
 	th.grpcAddrMap[m.GrpcAddr] = m.NodeId
+	logrus.Infof("[%s]MemberList.Add,%s,%s", th.selfNodeId, m.NodeId, m.GrpcAddr)
 	return nil
 }
 func (th *MemberList) Remove(nodeId string) {
