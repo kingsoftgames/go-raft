@@ -377,6 +377,7 @@ func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 			rst = -3
 			return
 		}
+		logrus.Infof("[%s]JoinRequest succeed,%s,%d", th.config.NodeId, addr, rsp.Result)
 	}
 	rst = 0
 }
