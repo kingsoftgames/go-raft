@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"strings"
 	"time"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -51,7 +52,7 @@ func (th *RaftServerGRpc) TransHttpRequest(ctx context.Context, req *inner.Trans
 	if len(req.Hash) != 0 {
 		ctx = context.WithValue(ctx, "hash", req.Hash)
 	}
-	data, err := th.App.HttpCall(ctx, req.Path, req.Data)
+	data, err := th.App.HttpCall(ctx, strings.ReplaceAll(req.Path, "/", "."), req.Data)
 	if err == nil {
 		rsp.Data = data
 	}
