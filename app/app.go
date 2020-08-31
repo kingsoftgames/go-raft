@@ -440,6 +440,7 @@ func (th *MainApp) Join(nodeId string, addr string, apiAddr string) error {
 			return err
 		}
 	} else {
+		logrus.Infof("[%s]Join,len(%d)", th.config.NodeId, th.members.Len())
 		if th.config.BootstrapExpect > 0 && th.members.Len() >= th.config.BootstrapExpect {
 			th.members.Foreach(func(member *Member) {
 				th.GetStore().AddServer(member.NodeId, member.RaftAddr)
@@ -498,12 +499,15 @@ func (th *MainApp) trimJoinFile(file string) {
 		logrus.Errorf("watchJoinFile,error,%s,%s", file, err.Error())
 	} else {
 		if !addrEqual(addrs, th.config.JoinAddr) { //if changed
+			th.config.JoinFile = addrs
 			th.tryJoin(addrs, false)
 		}
 	}
 }
 func (th *MainApp) watchJoinFile() {
-	th.trimJoinFile(th.config.JoinFile)
+	th.innerLogic.HandleNoHash(func() {
+		th.trimJoinFile(th.config.JoinFile)
+	})
 	if len(th.config.JoinFile) > 0 {
 		th.watch.Add(th.config.JoinFile, func(s string) {
 			th.innerLogic.HandleNoHash(func() {
