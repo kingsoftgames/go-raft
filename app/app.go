@@ -73,8 +73,6 @@ type MainApp struct {
 
 	http *httpApi
 
-	tryCnt int
-
 	OnLeaderChg common.SafeEvent
 
 	stopWait sync.WaitGroup
@@ -157,7 +155,7 @@ func (th *MainApp) Init(configPath string) int {
 		return -4
 	}
 	th.WaitGo()
-	if rst := th.tryJoin(th.config.JoinAddr); rst != 0 {
+	if rst := th.tryJoin(th.config.JoinAddr, true); rst != 0 {
 		return -5
 	}
 	th.handler.Register(th.app)
@@ -332,22 +330,38 @@ func (th *MainApp) initHttpApi() {
 	th.http = newHttpApi(th)
 	th.http.init(th.config.HttpApiAddr)
 }
-func (th *MainApp) tryConnect(addr string, rstChan chan int) {
-	th.tryCnt++
-	logrus.Infof("tryConnect %s,%d/%d", addr, th.tryCnt, th.config.TryJoinTime)
+func (th *MainApp) NewTimer(duration time.Duration, cb func()) *common.Timer {
+	return common.NewTimer(duration, func() {
+		th.innerLogic.HandleNoHash(cb)
+	})
+}
+func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
+	if tryCnt == nil {
+		var cnt = 0
+		tryCnt = &cnt
+	}
+	var rst = 1
+	defer func() {
+		if rstChan != nil && rst != 1 {
+			rstChan <- rst
+		}
+	}()
+	*tryCnt++
+	logrus.Infof("[%s]tryConnect %s,%d/%d", th.config.NodeId, addr, *tryCnt, th.config.TryJoinTime)
 	g := NewInnerGRpcClient(th.config.ConnectTimeoutMs)
 	if err := g.Connect(addr); err != nil {
 		logrus.Errorf("Join %s failed,%s", addr, err.Error())
-		if th.tryCnt >= th.config.TryJoinTime {
-			rstChan <- -1
+		if *tryCnt >= th.config.TryJoinTime {
+			rst = -1
 			return
 		}
-		th.timer = common.NewTimer(time.Duration(th.tryCnt*tryConnectIntervalMs)*time.Millisecond, func() {
+		th.timer = common.NewTimer(time.Duration(*tryCnt*tryConnectIntervalMs)*time.Millisecond, func() {
 			th.timer = nil
-			th.tryConnect(addr, rstChan)
+			th.tryConnect(addr, tryCnt, rstChan)
 		})
 		return
 	}
+	*tryCnt = 0
 	ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs*time.Millisecond)
 	if rsp, err := g.GetClient().JoinRequest(ctx, &inner.JoinReq{
 		Addr:    th.config.RaftAddr,
@@ -355,35 +369,40 @@ func (th *MainApp) tryConnect(addr string, rstChan chan int) {
 		NodeId:  th.config.NodeId,
 	}); err != nil {
 		logrus.Errorf("[%s]JoinRequest error,%s,%s", th.config.NodeId, addr, err.Error())
-		rstChan <- -2
+		rst = -2
 		return
 	} else {
 		if rsp.Result != 0 {
 			logrus.Error("[%s]JoinRequest failed,%s,%s", th.config.NodeId, addr, rsp.Message)
-			rstChan <- -3
+			rst = -3
 			return
 		}
 	}
-	rstChan <- 0
+	rst = 0
 }
-func (th *MainApp) tryJoin(addrs string) (rst int) {
+func (th *MainApp) tryJoin(addrs string, block bool) (rst int) {
 	if len(addrs) == 0 {
 		return 0
 	}
 	addrV := strings.Split(addrs, ",")
-	rstChan := make(chan int)
-	defer close(rstChan)
+	var rstChan chan int
+	if block {
+		rstChan = make(chan int, 1)
+		defer close(rstChan)
+	}
 	for _, addr := range addrV {
 		if th.members.GetByGrpcAddr(addr) != nil {
 			logrus.Debugf("[%s]tryJoin,already in ,%s", th.config.NodeId, addr)
 			continue
 		}
-		th.Go(func() {
-			th.tryConnect(addr, rstChan)
-		})
-		rst = <-rstChan
-		if rst == 0 {
-			break
+		th.GoN(func(p ...interface{}) {
+			th.tryConnect(p[0].(string), nil, rstChan)
+		}, addr)
+		if rstChan != nil {
+			rst = <-rstChan
+			if rst == 0 {
+				break
+			}
 		}
 	}
 	return
@@ -479,14 +498,18 @@ func (th *MainApp) trimJoinFile(file string) {
 		logrus.Errorf("watchJoinFile,error,%s,%s", file, err.Error())
 	} else {
 		if !addrEqual(addrs, th.config.JoinAddr) { //if changed
-			th.tryJoin(addrs)
+			th.tryJoin(addrs, false)
 		}
 	}
 }
 func (th *MainApp) watchJoinFile() {
 	th.trimJoinFile(th.config.JoinFile)
 	if len(th.config.JoinFile) > 0 {
-		th.watch.Add(th.config.JoinFile, th.trimJoinFile)
+		th.watch.Add(th.config.JoinFile, func(s string) {
+			th.innerLogic.HandleNoHash(func() {
+				th.trimJoinFile(s)
+			})
+		})
 	}
 	th.watch.Start()
 }

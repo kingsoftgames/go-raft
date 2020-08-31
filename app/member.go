@@ -56,33 +56,33 @@ func (th *MemberList) Foreach(cb func(member *Member)) {
 	}
 }
 func (th *MemberList) GetByRaftAddr(addr string) *Member {
+	th.l.RLock()
+	defer th.l.RUnlock()
 	if th.raftAddrMap == nil {
 		return nil
 	}
-	th.l.RLock()
-	defer th.l.RUnlock()
 	if id, ok := th.raftAddrMap[addr]; ok {
 		return th.mem[id]
 	}
 	return nil
 }
 func (th *MemberList) GetByGrpcAddr(addr string) *Member {
+	th.l.RLock()
+	defer th.l.RUnlock()
 	if th.grpcAddrMap == nil {
 		return nil
 	}
-	th.l.RLock()
-	defer th.l.RUnlock()
 	if id, ok := th.grpcAddrMap[addr]; ok {
 		return th.mem[id]
 	}
 	return nil
 }
 func (th *MemberList) Get(nodeId string) *Member {
+	th.l.RLock()
+	defer th.l.RUnlock()
 	if th.mem == nil {
 		return nil
 	}
-	th.l.RLock()
-	defer th.l.RUnlock()
 	return th.mem[nodeId]
 }
 func (th *MemberList) Add(m *Member) error {
