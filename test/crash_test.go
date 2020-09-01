@@ -1,8 +1,12 @@
 package test
 
 import (
+	"context"
 	"fmt"
+	"io/ioutil"
 	"math/rand"
+	"os"
+	"runtime"
 	"strconv"
 	"sync"
 	"testing"
@@ -143,4 +147,22 @@ func crash(t *testing.T, node int, count int) {
 
 func Test_CrashVoter(t *testing.T) {
 	crash(t, 3, 50)
+}
+
+func Test_CrashNotify(t *testing.T) {
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
+	})
+	notify := "cache/crash_notify.sh"
+	content := "#!/bin/bash\nmore $1"
+	if runtime.GOOS == "windows" {
+		notify = "crash_notify.bat"
+		content = "more %1"
+	}
+	ioutil.WriteFile(notify, []byte(content), os.ModePerm)
+	common.SetCrashConfigTest(notify)
+	singleAppTemplate(t, func() {
+		newClient("127.0.0.1:18310").Get().CrashRequest(context.Background(), &CrashReq{
+			Header: &Header{},
+		})
+	})
 }

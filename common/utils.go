@@ -1,10 +1,17 @@
 package common
 
 import (
+	"fmt"
+	"io/ioutil"
+	"math/rand"
+	"os"
+	"os/exec"
+	"runtime"
 	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"github.com/sirupsen/logrus"
 	"google.golang.org/protobuf/reflect/protoreflect"
@@ -116,6 +123,28 @@ func (th *GracefulGoFunc) CanGo() bool {
 func (th *GracefulGoFunc) UpdateExitWait(exitWait *GracefulExit) {
 	th.exitWait = exitWait
 }
+func getStack() string {
+	var buf [4096]byte
+	n := runtime.Stack(buf[:], false)
+	return string(buf[:n])
+}
+func Recover() {
+	if err := recover(); err != nil {
+		logrus.Error(getStack())
+		os.MkdirAll("log/crash", os.ModePerm)
+		crashFile := fmt.Sprintf("log/crash/crash%d-%s.log", rand.Intn(10000), time.Now().Format("2006-01-02-15-04-05"))
+		ioutil.WriteFile(crashFile, []byte(getStack()), os.ModePerm)
+		if len(*crashNotify) > 0 {
+			cmd := exec.Command(*crashNotify, crashFile)
+			if err := cmd.Run(); err != nil {
+				logrus.Errorf("call %s,err,%s", *crashNotify, err.Error())
+			}
+		}
+		if NeedCrash() {
+			panic(err)
+		}
+	}
+}
 func (th *GracefulGoFunc) Go(fn func()) {
 	if !th.CanGo() {
 		return
@@ -124,6 +153,7 @@ func (th *GracefulGoFunc) Go(fn func()) {
 	th.exitWait.Add(stack)
 	th.waitGo.Add(1)
 	go func() {
+		defer Recover()
 		th.waitGo.Done()
 		defer th.exitWait.Done(stack)
 		fn()
@@ -137,6 +167,7 @@ func (th *GracefulGoFunc) GoN(fn func(p ...interface{}), p ...interface{}) {
 	th.exitWait.Add(stack)
 	th.waitGo.Add(1)
 	go func() {
+		defer Recover()
 		th.waitGo.Done()
 		defer th.exitWait.Done(stack)
 		fn(p...)

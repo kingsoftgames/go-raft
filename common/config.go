@@ -150,6 +150,18 @@ var bootstrap *bool
 var bootstrapExpect *int
 var logCacheCapacity *int
 
+var crash *bool
+var crashNotify *string
+
+func NeedCrash() bool {
+	return *crash
+}
+
+//only use for test
+func SetCrashConfigTest(notify string) {
+	*crash = true
+	*crashNotify = notify
+}
 func trimConfigureFromFlag(config *Configure) {
 	flag.Visit(func(f *flag.Flag) {
 		switch f.Name {
@@ -203,4 +215,6 @@ func init() {
 	bootstrap = flag.Bool("bootstrap", false, "start as bootstrap( as leader)")
 	bootstrapExpect = flag.Int("bootstrap_expect", 0, "node num expect")
 	logCacheCapacity = flag.Int("log_cache_capacity", 0, "if >0 use LogStoreCache as logStore for raft")
+	crash = flag.Bool("crash", true, "if true ,process will exit when panic")
+	crashNotify = flag.String("crash_notify", "", "call sh/bat/exe when panic call like `crash_notify.sh crash.log`")
 }
