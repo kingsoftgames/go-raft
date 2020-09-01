@@ -13,6 +13,7 @@ service Test {
   rpc GetRequest (GetReq) returns (GetRsp) {}
   rpc SetRequest (SetReq) returns (SetRsp) {}
   rpc DelRequest (DelReq) returns (DelRsp) {}
+  rpc CrashRequest (CrashReq) returns (CrashRsp){}
 }
 
 message GetReq{
@@ -53,4 +54,10 @@ message DelReq{
 }
 message DelRsp{
   string a =1;
+}
+
+message CrashReq{
+  Header header = 1;
+}
+message CrashRsp{
 }

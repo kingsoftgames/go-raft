@@ -489,6 +489,91 @@ func (x *DelRsp) GetA() string {
 	return ""
 }
 
+type CrashReq struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+
+	Header *Header `protobuf:"bytes,1,opt,name=header,proto3" json:"header,omitempty"`
+}
+
+func (x *CrashReq) Reset() {
+	*x = CrashReq{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_test_proto_msgTypes[8]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *CrashReq) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CrashReq) ProtoMessage() {}
+
+func (x *CrashReq) ProtoReflect() protoreflect.Message {
+	mi := &file_test_proto_msgTypes[8]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CrashReq.ProtoReflect.Descriptor instead.
+func (*CrashReq) Descriptor() ([]byte, []int) {
+	return file_test_proto_rawDescGZIP(), []int{8}
+}
+
+func (x *CrashReq) GetHeader() *Header {
+	if x != nil {
+		return x.Header
+	}
+	return nil
+}
+
+type CrashRsp struct {
+	state         protoimpl.MessageState
+	sizeCache     protoimpl.SizeCache
+	unknownFields protoimpl.UnknownFields
+}
+
+func (x *CrashRsp) Reset() {
+	*x = CrashRsp{}
+	if protoimpl.UnsafeEnabled {
+		mi := &file_test_proto_msgTypes[9]
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		ms.StoreMessageInfo(mi)
+	}
+}
+
+func (x *CrashRsp) String() string {
+	return protoimpl.X.MessageStringOf(x)
+}
+
+func (*CrashRsp) ProtoMessage() {}
+
+func (x *CrashRsp) ProtoReflect() protoreflect.Message {
+	mi := &file_test_proto_msgTypes[9]
+	if protoimpl.UnsafeEnabled && x != nil {
+		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
+		if ms.LoadMessageInfo() == nil {
+			ms.StoreMessageInfo(mi)
+		}
+		return ms
+	}
+	return mi.MessageOf(x)
+}
+
+// Deprecated: Use CrashRsp.ProtoReflect.Descriptor instead.
+func (*CrashRsp) Descriptor() ([]byte, []int) {
+	return file_test_proto_rawDescGZIP(), []int{9}
+}
+
 type TestUnit_TestSubUnit struct {
 	state         protoimpl.MessageState
 	sizeCache     protoimpl.SizeCache
@@ -504,7 +589,7 @@ type TestUnit_TestSubUnit struct {
 func (x *TestUnit_TestSubUnit) Reset() {
 	*x = TestUnit_TestSubUnit{}
 	if protoimpl.UnsafeEnabled {
-		mi := &file_test_proto_msgTypes[8]
+		mi := &file_test_proto_msgTypes[10]
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		ms.StoreMessageInfo(mi)
 	}
@@ -517,7 +602,7 @@ func (x *TestUnit_TestSubUnit) String() string {
 func (*TestUnit_TestSubUnit) ProtoMessage() {}
 
 func (x *TestUnit_TestSubUnit) ProtoReflect() protoreflect.Message {
-	mi := &file_test_proto_msgTypes[8]
+	mi := &file_test_proto_msgTypes[10]
 	if protoimpl.UnsafeEnabled && x != nil {
 		ms := protoimpl.X.MessageStateOf(protoimpl.Pointer(x))
 		if ms.LoadMessageInfo() == nil {
@@ -612,16 +697,23 @@ var file_test_proto_rawDesc = []byte{
 	0x0b, 0x32, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x48, 0x65, 0x61, 0x64, 0x65, 0x72, 0x52,
 	0x06, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72, 0x12, 0x0c, 0x0a, 0x01, 0x61, 0x18, 0x02, 0x20, 0x01,
 	0x28, 0x09, 0x52, 0x01, 0x61, 0x22, 0x16, 0x0a, 0x06, 0x44, 0x65, 0x6c, 0x52, 0x73, 0x70, 0x12,
-	0x0c, 0x0a, 0x01, 0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x01, 0x61, 0x32, 0x8a, 0x01,
-	0x0a, 0x04, 0x54, 0x65, 0x73, 0x74, 0x12, 0x2a, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x52, 0x65, 0x71,
-	0x75, 0x65, 0x73, 0x74, 0x12, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x47, 0x65, 0x74, 0x52,
-	0x65, 0x71, 0x1a, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x47, 0x65, 0x74, 0x52, 0x73, 0x70,
-	0x22, 0x00, 0x12, 0x2a, 0x0a, 0x0a, 0x53, 0x65, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74,
-	0x12, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x53, 0x65, 0x74, 0x52, 0x65, 0x71, 0x1a, 0x0c,
-	0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x53, 0x65, 0x74, 0x52, 0x73, 0x70, 0x22, 0x00, 0x12, 0x2a,
-	0x0a, 0x0a, 0x44, 0x65, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x0c, 0x2e, 0x74,
-	0x65, 0x73, 0x74, 0x2e, 0x44, 0x65, 0x6c, 0x52, 0x65, 0x71, 0x1a, 0x0c, 0x2e, 0x74, 0x65, 0x73,
-	0x74, 0x2e, 0x44, 0x65, 0x6c, 0x52, 0x73, 0x70, 0x22, 0x00, 0x42, 0x08, 0x5a, 0x06, 0x2e, 0x3b,
+	0x0c, 0x0a, 0x01, 0x61, 0x18, 0x01, 0x20, 0x01, 0x28, 0x09, 0x52, 0x01, 0x61, 0x22, 0x30, 0x0a,
+	0x08, 0x43, 0x72, 0x61, 0x73, 0x68, 0x52, 0x65, 0x71, 0x12, 0x24, 0x0a, 0x06, 0x68, 0x65, 0x61,
+	0x64, 0x65, 0x72, 0x18, 0x01, 0x20, 0x01, 0x28, 0x0b, 0x32, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74,
+	0x2e, 0x48, 0x65, 0x61, 0x64, 0x65, 0x72, 0x52, 0x06, 0x68, 0x65, 0x61, 0x64, 0x65, 0x72, 0x22,
+	0x0a, 0x0a, 0x08, 0x43, 0x72, 0x61, 0x73, 0x68, 0x52, 0x73, 0x70, 0x32, 0xbc, 0x01, 0x0a, 0x04,
+	0x54, 0x65, 0x73, 0x74, 0x12, 0x2a, 0x0a, 0x0a, 0x47, 0x65, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65,
+	0x73, 0x74, 0x12, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x47, 0x65, 0x74, 0x52, 0x65, 0x71,
+	0x1a, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x47, 0x65, 0x74, 0x52, 0x73, 0x70, 0x22, 0x00,
+	0x12, 0x2a, 0x0a, 0x0a, 0x53, 0x65, 0x74, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x0c,
+	0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e, 0x53, 0x65, 0x74, 0x52, 0x65, 0x71, 0x1a, 0x0c, 0x2e, 0x74,
+	0x65, 0x73, 0x74, 0x2e, 0x53, 0x65, 0x74, 0x52, 0x73, 0x70, 0x22, 0x00, 0x12, 0x2a, 0x0a, 0x0a,
+	0x44, 0x65, 0x6c, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x0c, 0x2e, 0x74, 0x65, 0x73,
+	0x74, 0x2e, 0x44, 0x65, 0x6c, 0x52, 0x65, 0x71, 0x1a, 0x0c, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e,
+	0x44, 0x65, 0x6c, 0x52, 0x73, 0x70, 0x22, 0x00, 0x12, 0x30, 0x0a, 0x0c, 0x43, 0x72, 0x61, 0x73,
+	0x68, 0x52, 0x65, 0x71, 0x75, 0x65, 0x73, 0x74, 0x12, 0x0e, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e,
+	0x43, 0x72, 0x61, 0x73, 0x68, 0x52, 0x65, 0x71, 0x1a, 0x0e, 0x2e, 0x74, 0x65, 0x73, 0x74, 0x2e,
+	0x43, 0x72, 0x61, 0x73, 0x68, 0x52, 0x73, 0x70, 0x22, 0x00, 0x42, 0x08, 0x5a, 0x06, 0x2e, 0x3b,
 	0x74, 0x65, 0x73, 0x74, 0x62, 0x06, 0x70, 0x72, 0x6f, 0x74, 0x6f, 0x33,
 }
 
@@ -637,7 +729,7 @@ func file_test_proto_rawDescGZIP() []byte {
 	return file_test_proto_rawDescData
 }
 
-var file_test_proto_msgTypes = make([]protoimpl.MessageInfo, 10)
+var file_test_proto_msgTypes = make([]protoimpl.MessageInfo, 12)
 var file_test_proto_goTypes = []interface{}{
 	(*Header)(nil),               // 0: test.Header
 	(*GetReq)(nil),               // 1: test.GetReq
@@ -647,28 +739,33 @@ var file_test_proto_goTypes = []interface{}{
 	(*SetRsp)(nil),               // 5: test.SetRsp
 	(*DelReq)(nil),               // 6: test.DelReq
 	(*DelRsp)(nil),               // 7: test.DelRsp
-	(*TestUnit_TestSubUnit)(nil), // 8: test.TestUnit.TestSubUnit
-	nil,                          // 9: test.SetReq.AEntry
+	(*CrashReq)(nil),             // 8: test.CrashReq
+	(*CrashRsp)(nil),             // 9: test.CrashRsp
+	(*TestUnit_TestSubUnit)(nil), // 10: test.TestUnit.TestSubUnit
+	nil,                          // 11: test.SetReq.AEntry
 }
 var file_test_proto_depIdxs = []int32{
 	0,  // 0: test.GetReq.header:type_name -> test.Header
 	3,  // 1: test.GetRsp.b:type_name -> test.TestUnit
 	0,  // 2: test.SetReq.header:type_name -> test.Header
-	9,  // 3: test.SetReq.a:type_name -> test.SetReq.AEntry
+	11, // 3: test.SetReq.a:type_name -> test.SetReq.AEntry
 	3,  // 4: test.SetRsp.b:type_name -> test.TestUnit
 	0,  // 5: test.DelReq.header:type_name -> test.Header
-	3,  // 6: test.SetReq.AEntry.value:type_name -> test.TestUnit
-	1,  // 7: test.Test.GetRequest:input_type -> test.GetReq
-	4,  // 8: test.Test.SetRequest:input_type -> test.SetReq
-	6,  // 9: test.Test.DelRequest:input_type -> test.DelReq
-	2,  // 10: test.Test.GetRequest:output_type -> test.GetRsp
-	5,  // 11: test.Test.SetRequest:output_type -> test.SetRsp
-	7,  // 12: test.Test.DelRequest:output_type -> test.DelRsp
-	10, // [10:13] is the sub-list for method output_type
-	7,  // [7:10] is the sub-list for method input_type
-	7,  // [7:7] is the sub-list for extension type_name
-	7,  // [7:7] is the sub-list for extension extendee
-	0,  // [0:7] is the sub-list for field type_name
+	0,  // 6: test.CrashReq.header:type_name -> test.Header
+	3,  // 7: test.SetReq.AEntry.value:type_name -> test.TestUnit
+	1,  // 8: test.Test.GetRequest:input_type -> test.GetReq
+	4,  // 9: test.Test.SetRequest:input_type -> test.SetReq
+	6,  // 10: test.Test.DelRequest:input_type -> test.DelReq
+	8,  // 11: test.Test.CrashRequest:input_type -> test.CrashReq
+	2,  // 12: test.Test.GetRequest:output_type -> test.GetRsp
+	5,  // 13: test.Test.SetRequest:output_type -> test.SetRsp
+	7,  // 14: test.Test.DelRequest:output_type -> test.DelRsp
+	9,  // 15: test.Test.CrashRequest:output_type -> test.CrashRsp
+	12, // [12:16] is the sub-list for method output_type
+	8,  // [8:12] is the sub-list for method input_type
+	8,  // [8:8] is the sub-list for extension type_name
+	8,  // [8:8] is the sub-list for extension extendee
+	0,  // [0:8] is the sub-list for field type_name
 }
 
 func init() { file_test_proto_init() }
@@ -774,6 +871,30 @@ func file_test_proto_init() {
 			}
 		}
 		file_test_proto_msgTypes[8].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*CrashReq); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_test_proto_msgTypes[9].Exporter = func(v interface{}, i int) interface{} {
+			switch v := v.(*CrashRsp); i {
+			case 0:
+				return &v.state
+			case 1:
+				return &v.sizeCache
+			case 2:
+				return &v.unknownFields
+			default:
+				return nil
+			}
+		}
+		file_test_proto_msgTypes[10].Exporter = func(v interface{}, i int) interface{} {
 			switch v := v.(*TestUnit_TestSubUnit); i {
 			case 0:
 				return &v.state
@@ -792,7 +913,7 @@ func file_test_proto_init() {
 			GoPackagePath: reflect.TypeOf(x{}).PkgPath(),
 			RawDescriptor: file_test_proto_rawDesc,
 			NumEnums:      0,
-			NumMessages:   10,
+			NumMessages:   12,
 			NumExtensions: 0,
 			NumServices:   1,
 		},

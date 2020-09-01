@@ -44,6 +44,10 @@ func (th *testApp) HandleDelRequest(req *DelReq, rsp *DelRsp, rtv *app.HandlerRt
 	rsp.A = req.A
 	rtv.Futures.Add(th.mainApp.GetStore().Delete(req.A))
 }
+func (th *testApp) HandleCrashRequest(req *CrashReq, rsp *CrashRsp, rtv *app.HandlerRtv) {
+	var p *int
+	*p = 0
+}
 func (th *testApp) get(id string) *TestUnit {
 	if v, err := th.mainApp.GetStore().Get(id); err != nil || v == nil {
 		return nil

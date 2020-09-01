@@ -38,3 +38,11 @@ func (th *ImplementedTestServer) DelRequest(ctx context.Context, req *DelReq) (*
 	}
 	return f.Response().(*DelRsp), nil
 }
+func (th *ImplementedTestServer) CrashRequest(ctx context.Context, req *CrashReq) (*CrashRsp, error) {
+	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &CrashRsp{})
+	th.app.GRpcHandle(f)
+	if f.Error() != nil {
+		return nil, f.Error()
+	}
+	return f.Response().(*CrashRsp), nil
+}
