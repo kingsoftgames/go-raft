@@ -7,83 +7,88 @@ package inner;
 
 // The Inner service definition.
 service Raft {
-  // Sends a Join Request
-  rpc JoinRequest (JoinReq) returns (JoinRsp) {}
-  rpc SynMember(SynMemberReq) returns (SynMemberRsp){}
-  rpc TransHttpRequest(TransHttpReq) returns(TransHttpRsp){}
-  rpc TransGrpcRequest(TransGrpcReq) returns(TransGrpcRsp){}
-  rpc HealthRequest(HealthReq) returns(HealthRsp){}
+    // Sends a Join Request
+    rpc JoinRequest (JoinReq) returns (JoinRsp) {}
+    rpc SynMember(SynMemberReq) returns (SynMemberRsp){}
+    rpc TransHttpRequest(TransHttpReq) returns (TransHttpRsp){}
+    rpc TransGrpcRequest(TransGrpcReq) returns (TransGrpcRsp){}
+    rpc HealthRequest(HealthReq) returns (HealthRsp){}
+    rpc RemoveMember(RemoveMemberReq) returns (RemoveMemberRsp){}
 }
 message JoinReq {
-  string nodeId = 1;      //cur node Id
-  string addr = 2;        //cur node raft bind addr
-  string apiAddr = 3;     //cur node api addr
+    Member info = 1;
 }
 message JoinRsp {
-  int32 result = 1;      //0 ok
-  string message = 2;
+    int32 result = 1;      //0 ok
+    string message = 2;
 }
-message Member{
-  string nodeId = 1;
-  string raftAddr = 2;
-  string grpcAddr = 3;
+message Member {
+    string nodeId = 1;
+    string raftAddr = 2;
+    string innerAddr = 3;
+    string ver = 4;
+    uint64 lastIndex = 5;
 }
-message SynMemberReq{
-  repeated Member mem = 1;
-  bool bootstrap = 2;
-  int32 bootstrapExpect = 3;
+message SynMemberReq {
+    repeated Member mem = 1;
+    bool bootstrap = 2;
+    int32 bootstrapExpect = 3;
 }
-message SynMemberRsp{
-  int32 result = 1;
+message SynMemberRsp {
+    int32 result = 1;
 }
 message TransHttpReq {
-  string hash = 1;
-  string path = 2;
-  bytes data = 3;
+    string hash = 1;
+    string path = 2;
+    bytes data = 3;
 }
-message TransHttpRsp{
-  bytes data = 1;
+message TransHttpRsp {
+    bytes data = 1;
 }
 message TransGrpcReq {
-  string hash = 1;
-  string name = 2;
-  bytes data = 3;
+    string hash = 1;
+    string name = 2;
+    bytes data = 3;
 }
-message TransGrpcRsp{
-  bytes data = 1;
+message TransGrpcRsp {
+    bytes data = 1;
 }
-message HealthReq{
-  string nodeId = 1;      //cur node Id
-  string addr = 2;        //cur node raft bind addr
-  string apiAddr = 3;     //cur node api addr
-  int64 send_time = 4;
+message HealthReq {
+    Member info = 1;
+    int64 send_time = 2;
 }
-message HealthRsp{
-  int64 recv_time = 1;
-  int64 send_time = 2;
+message HealthRsp {
+    int64 recv_time = 1;
+    int64 send_time = 2;
 }
-
+message RemoveMemberReq {
+    string node_id = 1;
+}
+message RemoveMemberRsp {
+    int32 result = 1;
+    string node_id = 2;
+}
 message ApplyCmd{
-  enum CmdType{
-    INVALID = 0;
-    GET = 1;
-    SET = 2;
-    DEL = 3;
-  }
-  CmdType cmd = 1;
-  message OpGet{
-    string key = 1;
-  }
-  message OpSet{
-    string key = 1;
-    bytes value = 2;
-  }
-  message OpDel{
-    string key = 1;
-  }
-  oneof obj{
-    OpGet get = 2;
-    OpSet set = 3;
-    OpDel del = 4;
-  }
+    enum CmdType{
+        INVALID = 0;
+        GET = 1;
+        SET = 2;
+        DEL = 3;
+    }
+    CmdType cmd = 1;
+    message OpGet{
+        string key = 1;
+    }
+    message OpSet{
+        string key = 1;
+        bytes value = 2;
+    }
+    message OpDel{
+        string key = 1;
+    }
+    oneof obj{
+        OpGet get = 2;
+        OpSet set = 3;
+        OpDel del = 4;
+    }
 }

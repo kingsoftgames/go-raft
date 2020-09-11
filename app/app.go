@@ -3,12 +3,14 @@ package app
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/hashicorp/raft"
@@ -29,6 +31,9 @@ const (
 	tryConnectIntervalMs = 2000
 	grpcTimeoutMs        = 2000
 	healthIntervalMs     = 2000
+	delayStopMs          = 10000
+	stopTimeoutMs        = 5 * 60 * 1000
+	updateTimeoutMs      = 1000
 )
 
 type IGRpcHandler interface {
@@ -58,8 +63,9 @@ type MainApp struct {
 	app IApp
 	common.GracefulGoFunc
 	common.CheckWork
-	service *Service
-	config  *common.Configure
+	api    *GRpcService //out for api
+	inner  *GRpcService //inner api transfer
+	config *common.Configure
 
 	store *store.RaftStore
 
@@ -83,6 +89,14 @@ type MainApp struct {
 	watch *common.FileWatch
 
 	timer *common.Timer
+
+	isBoot atomic.Value
+
+	updateTimer *common.Timer
+
+	stopTimer *common.Timer
+
+	latestVersion atomic.Value
 }
 
 func NewMainApp(app IApp, exitWait *common.GracefulExit) *MainApp {
@@ -91,6 +105,7 @@ func NewMainApp(app IApp, exitWait *common.GracefulExit) *MainApp {
 		config:  common.NewDefaultConfigure(),
 		members: &MemberList{},
 	}
+	mainApp.isBoot.Store(false)
 	mainApp.watch = common.NewFileWatch(mainApp)
 	if exitWait == nil {
 		exitWait = &common.GracefulExit{}
@@ -116,47 +131,91 @@ func (th *MainApp) Init(configPath string) int {
 		logrus.Errorf("app Init err,%s", err.Error())
 		return -2
 	}
+	th.Name = th.config.NodeId
 	th.runLogic.Init(runtime.NumCPU()-1, th)
 	th.innerLogic.Init(1, th)
 	th.config.StoreDir = filepath.Join(th.config.StoreDir, th.config.NodeId)
 	th.store = store.New(th.config, nil, th)
 	th.store.OnLeader.Add(func(i interface{}) {
+		if i.(bool) {
+			th.startUpdateTime()
+			th.onChgToLeader()
+		} else {
+			th.stopUpdateTime()
+		}
 		th.app.OnLeader(i.(bool))
 	})
 	th.store.OnLeaderChg.Add(func(i interface{}) {
 		th.OnLeaderChg.Emit(i)
+		if i != nil && len(i.(string)) > 0 {
+			//获取leader节点的连接，如果获取到了，那么设置inner的client为leader的连接
+			if m := th.members.GetByRaftAddr(i.(string)); m != nil {
+				logrus.Debugf("[%s]Leader Chg %s,%d", th.config.NodeId, i.(string), th.store.GetRaft().LastIndex())
+				th.inner.UpdateClient(m.Con)
+				if m.Con != nil { //如果连接不为空，那么设置可以work
+					th.Work()
+				} else {
+					th.Idle() //如果连接为空，那么设置不可以work
+					logrus.Debugf("[%s]leader not connect Work(%v) ", th.config.NodeId, th.Check())
+				}
+			}
+			th.Work()
+			th.api.SetHealth(true)
+		} else {
+			th.Idle()
+			th.api.SetHealth(false)
+		}
+		th.isBoot.Store(true)
 	})
-	th.members.OnConEvent.Add(func(i interface{}) {
-		//leaderAddr := string(th.store.GetRaft().Leader())
-		//logrus.Debugf("OnConEvent %s , %s", i.(*Member).RaftAddr, leaderAddr)
-		//if i.(*Member).RaftAddr == string(th.store.GetRaft().Leader()) {
-		//	th.Work()
-		//	logrus.Debugf("[%s]connect Work(%v)", th.config.NodeId, th.Check())
+	th.store.OnPeerAdd.Add(func(i interface{}) {
+		//if th.store.IsLeader() {
+		//	th.checkRemoveOldVersionNode()
 		//}
 	})
+	//th.members.OnConEvent.Add(func(i interface{}) {
+	//	leaderAddr := string(th.store.GetRaft().Leader())
+	//	logrus.Debugf("OnConEvent %s , %s", i.(*Member).RaftAddr, leaderAddr)
+	//	if i.(*Member).RaftAddr == leaderAddr { //如果连接的节点为leader节点，那么设置可以work
+	//		th.Work()
+	//		logrus.Debugf("[%s]connect Work(%v)", th.config.NodeId, th.Check())
+	//	}
+	//})
 	th.store.OnStateChg.Add(func(i interface{}) {
 		switch i.(raft.RaftState) {
 		case raft.Leader, raft.Follower:
 			th.Work()
+			th.api.SetHealth(true)
+			th.isBoot.Store(true)
 		default:
 			th.Idle()
+			th.api.SetHealth(false)
 		}
 	})
-	if err := th.store.Open(th.config.LogConfig.Level, common.NewFileLog(th.config.LogConfig, "raft")); err != nil {
+	if err := th.store.Open(th.config.LogConfig.Level, common.NewFileLog(th.config.LogConfig, th.config.NodeId, "raft")); err != nil {
 		logrus.Errorf("store open err,%s", err.Error())
 		return -3
 	}
 	th.joinSelf()
-	th.service = New(th.config.GrpcApiAddr, th.config.ConnectTimeoutMs, th.store, th)
-	inner.RegisterRaftServer(th.service.GetGrpcServer(), &RaftServerGRpc{App: th})
-	th.app.Register(th.service.GetGrpcServer())
-	if err := th.service.Start(); err != nil {
-		logrus.Errorf("service start err,%s", err.Error())
+	th.inner = New(th.config.InnerAddr, th.config.ConnectTimeoutMs, th.store, th)
+	inner.RegisterRaftServer(th.inner.GetGrpcServer(), &RaftServerGRpc{App: th})
+	if err := th.inner.Start(); err != nil {
+		logrus.Errorf("inner start err,%s", err.Error())
 		return -4
 	}
+	th.inner.SetHealth(true)
 	th.WaitGo()
-	if rst := th.tryJoin(th.config.JoinAddr, true); rst != 0 {
+
+	th.api = New(th.config.GrpcApiAddr, th.config.ConnectTimeoutMs, th.store, th)
+	th.app.Register(th.api.GetGrpcServer())
+	if err := th.api.Start(); err != nil {
+		logrus.Errorf("api start err,%s", err.Error())
 		return -5
+	}
+	th.api.SetHealth(false)
+	th.WaitGo()
+
+	if rst := th.tryJoin(th.config.JoinAddr, true); rst != 0 {
+		return -6
 	}
 	th.handler.Register(th.app)
 	th.initHttpApi()
@@ -220,9 +279,9 @@ func (th *MainApp) GRpcHandle(f *ReplyFuture) {
 			f.response(fmt.Errorf("node are stopping"))
 		}
 	}
-	if th.service.IsLeader() {
+	if th.store.IsLeader() {
 		leader()
-	} else if th.service.IsFollower() {
+	} else if th.store.IsFollower() {
 		if readOnly := f.ctx.Value("readOnly"); readOnly != nil && readOnly.(bool) {
 			leader()
 			return
@@ -234,7 +293,7 @@ func (th *MainApp) GRpcHandle(f *ReplyFuture) {
 			}
 			req.Data, _ = common.Encode(f.req)
 			ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs*time.Millisecond)
-			con := th.service.GetInner()
+			con := th.inner.GetInner()
 			if con == nil {
 				f.response(fmt.Errorf("node can not work"))
 				return
@@ -299,26 +358,46 @@ func (th *MainApp) Start() {
 		th.runLogic.Start()
 	})
 }
-
+func (th *MainApp) DelayStop() {
+	logrus.Infof("[%s]DelayStop,begin", th.config.NodeId)
+	th.Idle()
+	th.stopUpdateTime()
+	th.stopHealthTicker()
+	th.watch.Stop()
+	th.store.Shutdown()
+	th.stopTimer = th.NewTimer(time.Duration(delayStopMs)*time.Millisecond, func() {
+		th.Stop()
+		th.NewTimer(time.Duration(stopTimeoutMs)*time.Millisecond, func() {
+			logrus.Errorf("[%s]DelayStop timeout,forced exit", th.config.NodeId)
+			os.Exit(0)
+		})
+	})
+}
 func (th *MainApp) Stop() {
 	logrus.Infof("[%s]Stop,begin", th.config.NodeId)
+	th.Idle()
 	//first stop runLogic , make sure all running logic deal over
 	if th.timer != nil {
 		th.timer.Stop()
 		th.timer = nil
 	}
+	th.stopUpdateTime()
+	th.stopHealthTicker()
 	th.watch.Stop()
 	th.runLogic.Stop()
-	th.innerLogic.Stop()
 	th.store.Shutdown()
-	th.service.Stop()
-	th.Idle()
+	th.innerLogic.Stop()
+	if th.inner != nil {
+		th.inner.Stop()
+		th.inner = nil
+	}
+	if th.api != nil {
+		th.api.Stop()
+		th.api = nil
+	}
 	if th.http != nil {
 		th.http.close()
-	}
-	if th.healthTick != nil {
-		th.healthTick.Stop()
-		th.healthTick = nil
+		th.http = nil
 	}
 	logrus.Infof("[%s]Stop,end", th.config.NodeId)
 }
@@ -349,12 +428,13 @@ func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 	*tryCnt++
 	logrus.Infof("[%s]tryConnect %s,%d/%d", th.config.NodeId, addr, *tryCnt, th.config.TryJoinTime)
 	g := NewInnerGRpcClient(th.config.ConnectTimeoutMs)
-	if err := g.Connect(addr); err != nil {
+	if err := g.Connect(addr, th.config.NodeId); err != nil {
 		logrus.Errorf("Join %s failed,%s", addr, err.Error())
 		if *tryCnt >= th.config.TryJoinTime {
 			rst = -1
 			return
 		}
+		//TODO  Bug : th.timer cannot shared by all connect
 		th.timer = common.NewTimer(time.Duration(*tryCnt*tryConnectIntervalMs)*time.Millisecond, func() {
 			th.timer = nil
 			th.tryConnect(addr, tryCnt, rstChan)
@@ -364,9 +444,12 @@ func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 	*tryCnt = 0
 	ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs*time.Millisecond)
 	if rsp, err := g.GetClient().JoinRequest(ctx, &inner.JoinReq{
-		Addr:    th.config.RaftAddr,
-		ApiAddr: th.config.GrpcApiAddr,
-		NodeId:  th.config.NodeId,
+		Info: &inner.Member{
+			NodeId:    th.config.NodeId,
+			RaftAddr:  th.config.RaftAddr,
+			InnerAddr: th.config.InnerAddr,
+			Ver:       th.config.Ver,
+		},
 	}); err != nil {
 		logrus.Errorf("[%s]JoinRequest error,%s,%s", th.config.NodeId, addr, err.Error())
 		rst = -2
@@ -410,34 +493,107 @@ func (th *MainApp) tryJoin(addrs string, block bool) (rst int) {
 }
 func (th *MainApp) joinSelf() {
 	th.members.selfNodeId = th.config.NodeId
-	th.Join(th.config.NodeId, th.config.RaftAddr, th.config.GrpcApiAddr)
+	th.Join(&inner.Member{
+		NodeId:    th.config.NodeId,
+		RaftAddr:  th.config.RaftAddr,
+		InnerAddr: th.config.InnerAddr,
+		Ver:       th.config.Ver,
+	})
+	th.updateLatestVersion(th.config.Ver)
 }
-func (th *MainApp) OnlyJoin(nodeId string, addr string, apiAddr string) error {
+func (th *MainApp) updateLatestVersion(ver string) {
+	v := th.latestVersion.Load()
+	if v == nil || v.(string) < ver {
+		th.latestVersion.Store(ver)
+	}
+}
+func (th *MainApp) OnlyJoin(info *inner.Member) error {
+	if !th.store.ExistsNode(info.NodeId) {
+		return nil
+	}
 	return th.members.Add(&Member{
-		NodeId:   nodeId,
-		RaftAddr: addr,
-		GrpcAddr: apiAddr,
+		NodeId:    info.NodeId,
+		RaftAddr:  info.RaftAddr,
+		InnerAddr: info.InnerAddr,
+		Ver:       info.Ver,
+		LastIndex: info.LastIndex,
 	})
 }
-func (th *MainApp) Join(nodeId string, addr string, apiAddr string) error {
-	if th.members.Get(nodeId) != nil {
+func (th *MainApp) joinMem(info *inner.Member) (err error) {
+	logrus.Infof("[%s]joinMem,%s", th.config.NodeId, info.NodeId)
+	if th.store.IsLeader() { //leader
+		if info.Ver < th.config.Ver { //小于当前版本
+			return fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver)
+		}
+		if _, err = th.addMem(info); err != nil {
+			return
+		}
+		if err = th.store.Join(info.NodeId, info.RaftAddr); err != nil {
+			return
+		}
+		//if info.Ver > th.config.Ver { //大于当前版本，转移leader权
+		//	return th.store.GetRaft().LeadershipTransferToServer(raft.ServerID(info.NodeId), raft.ServerAddress(info.RaftAddr)).Error()
+		//}
+	} else if th.store.IsFollower() {
+		con := th.inner.GetInner()
+		if con == nil {
+			return fmt.Errorf("[%s]node can not work[%v]", th.config.NodeId, th.store.GetRaft().State())
+		}
+		con.GetRaftClient(func(client inner.RaftClient) {
+			ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs*time.Millisecond)
+			logrus.Debugf("[%s]JoinRequest begin,%s", th.config.NodeId, info.NodeId)
+			if rsp, _err := client.JoinRequest(ctx, &inner.JoinReq{
+				Info: &inner.Member{
+					NodeId:    info.NodeId,
+					RaftAddr:  info.RaftAddr,
+					InnerAddr: info.InnerAddr,
+					Ver:       info.Ver,
+				},
+			}); _err != nil {
+				err = _err
+			} else {
+				if rsp.Result != 0 {
+					err = fmt.Errorf("JoinRsp err %d,%s", rsp.Result, rsp.Message)
+				}
+			}
+			logrus.Debugf("[%s]JoinRequest end,%s", th.config.NodeId, info.NodeId)
+			return
+		})
+	} else {
+		return fmt.Errorf("node can not work (candidate)")
+	}
+	return
+}
+func (th *MainApp) addMem(info *inner.Member) (bool, error) {
+	if th.members.Get(info.NodeId) != nil {
 		th.members.SynMemberToAll(th.config.Bootstrap, th.config.BootstrapExpect)
-		return nil
+		return true, nil
 	}
 	if err := th.members.Add(&Member{
-		NodeId:   nodeId,
-		RaftAddr: addr,
-		GrpcAddr: apiAddr,
+		NodeId:    info.NodeId,
+		RaftAddr:  info.RaftAddr,
+		InnerAddr: info.InnerAddr,
+		Ver:       info.Ver,
 	}); err != nil {
-		return err
+		return true, err
 	}
-	if th.config.NodeId == nodeId { // join self
-		return nil
+	th.updateLatestVersion(info.Ver)
+	if th.config.NodeId == info.NodeId { // join self
+		return true, nil
 	}
 	//同步下
 	th.members.SynMemberToAll(th.config.Bootstrap, th.config.BootstrapExpect)
+	return false, nil
+}
+func (th *MainApp) Join(info *inner.Member) error {
+	if th.isBoot.Load().(bool) { //
+		return th.joinMem(info)
+	}
+	if r, err := th.addMem(info); r {
+		return err
+	}
 	if th.GetStore().IsLeader() {
-		if err := th.GetStore().Join(nodeId, addr, apiAddr); err != nil {
+		if err := th.GetStore().Join(info.NodeId, info.RaftAddr); err != nil {
 			return err
 		}
 	} else {
@@ -455,25 +611,35 @@ func (th *MainApp) Join(nodeId string, addr string, apiAddr string) error {
 	}
 	return nil
 }
-
+func (th *MainApp) stopHealthTicker() {
+	if th.healthTick != nil {
+		th.healthTick.Stop()
+		th.healthTick = nil
+	}
+}
 func (th *MainApp) healthTicker() {
 	th.healthTick = common.NewTicker(healthIntervalMs*time.Millisecond, func() {
-		th.members.Foreach(func(member *Member) {
+		a := th
+		a.members.Foreach(func(member *Member) {
 			if member.Con != nil {
 				th.Go(func() {
 					member.Con.GetRaftClient(func(client inner.RaftClient) {
 						if client != nil {
 							ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs*time.Millisecond)
-							rsp, err := client.HealthRequest(ctx, &inner.HealthReq{
-								NodeId:   th.config.NodeId,
-								Addr:     th.config.RaftAddr,
-								ApiAddr:  th.config.GrpcApiAddr,
+							_, err := client.HealthRequest(ctx, &inner.HealthReq{
+								Info: &inner.Member{
+									NodeId:    th.config.NodeId,
+									RaftAddr:  th.config.RaftAddr,
+									InnerAddr: th.config.InnerAddr,
+									Ver:       th.config.Ver,
+									LastIndex: th.store.GetRaft().LastIndex(),
+								},
 								SendTime: time.Now().UnixNano(),
 							})
 							if err != nil {
 								logrus.Warnf("[%s]healthTicker(failed) to [%s], %s", th.config.NodeId, member.NodeId, err.Error())
 							} else {
-								logrus.Debugf("[%s]healthTicker(ok) to [%s], %d", th.config.NodeId, member.NodeId, (time.Now().UnixNano()-rsp.SendTime)/1e6)
+								//logrus.Debugf("[%s]healthTicker(ok) to [%s], %d", th.config.NodeId, member.NodeId, (time.Now().UnixNano()-rsp.SendTime)/1e6)
 							}
 							member.Health(err == nil)
 						}
@@ -517,6 +683,105 @@ func (th *MainApp) watchJoinFile() {
 		})
 	}
 	th.watch.Start()
+}
+
+func (th *MainApp) checkUpdate() {
+	if !th.store.IsLeader() {
+		return
+	}
+	var newLeader *raft.Server
+	nodes := th.store.GetNodes()
+	latestVer := th.latestVersion.Load().(string)
+	for _, node := range nodes {
+		mem := th.members.Get(string(node.ID))
+		if mem == nil {
+			logrus.Errorf("[%s]can not found %s", th.config.NodeId, node.ID)
+			continue
+		}
+		if mem.Ver > th.config.Ver {
+			newLeader = &node
+		}
+		if mem.Ver < latestVer && node.Suffrage == raft.Voter && mem.NodeId != th.config.NodeId { //版本低的移除选举权（不能移除自己）
+			if err := th.store.GetRaft().DemoteVoter(node.ID, 0, 0).Error(); err != nil {
+				logrus.Errorf("[%s]DemoteVoter %s err,%s", th.config.NodeId, node.ID, err.Error())
+			} else {
+				logrus.Infof("[%s]DemoteVoter %s", th.config.NodeId, node.ID)
+			}
+			newLeader = nil
+		}
+	}
+	if newLeader != nil {
+		if err := th.store.GetRaft().LeadershipTransferToServer(newLeader.ID, newLeader.Address).Error(); err != nil {
+			logrus.Errorf("[%s]LeaderTransfer to %s,err,%s", th.config.NodeId, newLeader.ID, err.Error())
+		} else {
+			logrus.Infof("[%s]LeaderTransfer to %s", th.config.NodeId, newLeader.ID)
+			return
+		}
+	}
+	th.checkRemoveOldVersionNode()
+	th.updateTimer = nil
+	th.startUpdateTime()
+}
+func (th *MainApp) startUpdateTime() {
+	if th.updateTimer == nil {
+		th.updateTimer = th.NewTimer(time.Duration(updateTimeoutMs)*time.Millisecond, func() {
+			th.checkUpdate()
+		})
+	}
+}
+func (th *MainApp) stopUpdateTime() {
+	if th.updateTimer != nil {
+		th.updateTimer.Stop()
+		th.updateTimer = nil
+	}
+}
+
+//cur node upgrade to leader
+func (th *MainApp) onChgToLeader() {
+	logrus.Infof("[%s]onChgToLeader,last index,%d", th.config.NodeId, th.store.GetRaft().LastIndex())
+}
+
+//only run on leader node
+func (th *MainApp) checkRemoveOldVersionNode() {
+	nodes := th.store.GetNodes()
+	var cnt int
+	oldMem := make([]*Member, 0)
+	latestVer := th.latestVersion.Load().(string)
+	for _, node := range nodes {
+		mem := th.members.Get(string(node.ID))
+		if mem == nil {
+			logrus.Errorf("[%s]can not found %s", th.config.NodeId, node.ID)
+			continue
+		}
+		if mem.Ver == latestVer {
+			cnt++
+		} else {
+			oldMem = append(oldMem, mem)
+		}
+	}
+	if cnt >= th.config.BootstrapExpect { //达到需求上限，移除旧版本node
+		for _, mem := range oldMem {
+			if mem.NodeId == th.config.NodeId {
+				continue
+			}
+			if err := th.store.GetRaft().RemoveServer(raft.ServerID(mem.NodeId), 0, 0).Error(); err != nil {
+				logrus.Errorf("[%s]RemoveServer err,%s,%s", th.config.NodeId, mem.NodeId, err.Error())
+				continue
+			}
+			logrus.Infof("[%s]RemoveServer successful,%s,%v", th.config.NodeId, mem.NodeId, th.store.GetNodes())
+			th.members.LeaveToAll(mem.NodeId)
+			th.members.Remove(mem.NodeId)
+		}
+	}
+}
+func (th *MainApp) RemoveMember(nodeId string) error {
+	if nodeId == th.config.NodeId { //移除自己
+		th.DelayStop()
+	} else { //移除其他节点
+		removed := th.members.Remove(nodeId)
+		logrus.Infof("[%s]RemoveMember finished,%s,%v", th.config.NodeId, nodeId, removed)
+	}
+	return nil
 }
 
 var appsName = map[string]reflect.Type{}

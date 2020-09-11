@@ -17,17 +17,18 @@ type RaftServerGRpc struct {
 	App *MainApp
 }
 
-func (th *RaftServerGRpc) JoinRequest(ctx context.Context, req *inner.JoinReq) (*inner.JoinRsp, error) {
-	logrus.Infof("[API][%s]JoinRequest,%s,%s", th.App.config.NodeId, req.NodeId, req.Addr)
+func (th *RaftServerGRpc) JoinRequest(_ context.Context, req *inner.JoinReq) (*inner.JoinRsp, error) {
+	logrus.Infof("[API][%s]JoinRequest,%v", th.App.config.NodeId, *req.Info)
+	defer logrus.Debugf("[API][%s]JoinRequest finished,%v", th.App.config.NodeId, *req.Info)
 	rsp := &inner.JoinRsp{}
-	if err := th.App.Join(req.NodeId, req.Addr, req.ApiAddr); err != nil {
+	if err := th.App.Join(req.Info); err != nil {
 		rsp.Result = -1
 		rsp.Message = err.Error()
 		return rsp, err
 	}
 	return rsp, nil
 }
-func (th *RaftServerGRpc) SynMember(ctx context.Context, req *inner.SynMemberReq) (*inner.SynMemberRsp, error) {
+func (th *RaftServerGRpc) SynMember(_ context.Context, req *inner.SynMemberReq) (*inner.SynMemberRsp, error) {
 	logrus.Infof("[API][%s]SynMember,%v", th.App.config.NodeId, req.Mem)
 	rsp := &inner.SynMemberRsp{}
 	th.App.config.Bootstrap = req.Bootstrap
@@ -38,12 +39,15 @@ func (th *RaftServerGRpc) SynMember(ctx context.Context, req *inner.SynMemberReq
 			continue
 		}
 		if err := th.App.members.Add(&Member{
-			NodeId:   m.NodeId,
-			RaftAddr: m.RaftAddr,
-			GrpcAddr: m.GrpcAddr,
+			NodeId:    m.NodeId,
+			RaftAddr:  m.RaftAddr,
+			InnerAddr: m.InnerAddr,
+			Ver:       m.Ver,
+			LastIndex: m.LastIndex,
 		}); err != nil {
 			logrus.Errorf("[API]SynMember,Add,error,%s,%s", m.NodeId, err.Error())
 		}
+		th.App.updateLatestVersion(m.Ver)
 	}
 	return rsp, nil
 }
@@ -69,13 +73,26 @@ func (th *RaftServerGRpc) TransGrpcRequest(ctx context.Context, req *inner.Trans
 	}
 	return rsp, err
 }
-func (th *RaftServerGRpc) HealthRequest(ctx context.Context, req *inner.HealthReq) (*inner.HealthRsp, error) {
-	common.Debugf("[%s]HealthRequest from [%s],%d", th.App.config.NodeId, req.NodeId, (time.Now().UnixNano()-req.SendTime)/1e6)
-	if err := th.App.OnlyJoin(req.NodeId, req.Addr, req.ApiAddr); err != nil {
+func (th *RaftServerGRpc) HealthRequest(_ context.Context, req *inner.HealthReq) (*inner.HealthRsp, error) {
+	common.Debugf("[%s]HealthRequest from [%s],%d,%d", th.App.config.NodeId, req.Info.NodeId, req.Info.LastIndex, (time.Now().UnixNano()-req.SendTime)/1e6)
+	if err := th.App.OnlyJoin(req.Info); err != nil {
 		logrus.Errorf("[%s]HealthRequest,%v", th.App.config.NodeId, *req)
 	}
 	return &inner.HealthRsp{
 		RecvTime: req.SendTime,
 		SendTime: time.Now().UnixNano(),
 	}, nil
+}
+
+func (th *RaftServerGRpc) RemoveMember(_ context.Context, req *inner.RemoveMemberReq) (*inner.RemoveMemberRsp, error) {
+	logrus.Infof("[API][%s]RemoveMember,%s", th.App.config.NodeId, req.NodeId)
+	//defer logrus.Debugf("[API][%s]RemoveMember finished,%s", th.App.config.NodeId, req.NodeId)
+	rsp := &inner.RemoveMemberRsp{
+		NodeId: req.NodeId,
+	}
+	if err := th.App.RemoveMember(req.NodeId); err != nil {
+		rsp.Result = -1
+		return rsp, err
+	}
+	return rsp, nil
 }

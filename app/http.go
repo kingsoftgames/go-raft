@@ -108,9 +108,9 @@ func (th *httpApi) post(path string, hd *HandlerValue) {
 				ctx.JSON(200, rsp)
 			}
 		}
-		if th.mainApp.service.IsLeader() { //leader逻辑处理
+		if th.mainApp.store.IsLeader() { //leader逻辑处理
 			leader()
-		} else if th.mainApp.service.IsFollower() { //非leader
+		} else if th.mainApp.store.IsFollower() { //非leader
 			if readOnly := ctx.Request.Header.Get("readOnly"); readOnly == "true" {
 				leader()
 				return
@@ -126,7 +126,7 @@ func (th *httpApi) post(path string, hd *HandlerValue) {
 			if hash := ctx.Request.Header.Get("hash"); len(hash) > 0 {
 				req.Hash = hash
 			}
-			con := th.mainApp.service.GetInner()
+			con := th.mainApp.inner.GetInner()
 			if con == nil {
 				ctx.JSON(403, newErr("can not work"))
 				return

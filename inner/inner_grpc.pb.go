@@ -23,6 +23,7 @@ type RaftClient interface {
 	TransHttpRequest(ctx context.Context, in *TransHttpReq, opts ...grpc.CallOption) (*TransHttpRsp, error)
 	TransGrpcRequest(ctx context.Context, in *TransGrpcReq, opts ...grpc.CallOption) (*TransGrpcRsp, error)
 	HealthRequest(ctx context.Context, in *HealthReq, opts ...grpc.CallOption) (*HealthRsp, error)
+	RemoveMember(ctx context.Context, in *RemoveMemberReq, opts ...grpc.CallOption) (*RemoveMemberRsp, error)
 }
 
 type raftClient struct {
@@ -78,6 +79,15 @@ func (c *raftClient) HealthRequest(ctx context.Context, in *HealthReq, opts ...g
 	return out, nil
 }
 
+func (c *raftClient) RemoveMember(ctx context.Context, in *RemoveMemberReq, opts ...grpc.CallOption) (*RemoveMemberRsp, error) {
+	out := new(RemoveMemberRsp)
+	err := c.cc.Invoke(ctx, "/inner.Raft/RemoveMember", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RaftServer is the server API for Raft service.
 // All implementations must embed UnimplementedRaftServer
 // for forward compatibility
@@ -88,6 +98,7 @@ type RaftServer interface {
 	TransHttpRequest(context.Context, *TransHttpReq) (*TransHttpRsp, error)
 	TransGrpcRequest(context.Context, *TransGrpcReq) (*TransGrpcRsp, error)
 	HealthRequest(context.Context, *HealthReq) (*HealthRsp, error)
+	RemoveMember(context.Context, *RemoveMemberReq) (*RemoveMemberRsp, error)
 	mustEmbedUnimplementedRaftServer()
 }
 
@@ -109,6 +120,9 @@ func (*UnimplementedRaftServer) TransGrpcRequest(context.Context, *TransGrpcReq)
 }
 func (*UnimplementedRaftServer) HealthRequest(context.Context, *HealthReq) (*HealthRsp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method HealthRequest not implemented")
+}
+func (*UnimplementedRaftServer) RemoveMember(context.Context, *RemoveMemberReq) (*RemoveMemberRsp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method RemoveMember not implemented")
 }
 func (*UnimplementedRaftServer) mustEmbedUnimplementedRaftServer() {}
 
@@ -206,6 +220,24 @@ func _Raft_HealthRequest_Handler(srv interface{}, ctx context.Context, dec func(
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Raft_RemoveMember_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(RemoveMemberReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).RemoveMember(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inner.Raft/RemoveMember",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).RemoveMember(ctx, req.(*RemoveMemberReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Raft_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inner.Raft",
 	HandlerType: (*RaftServer)(nil),
@@ -229,6 +261,10 @@ var _Raft_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "HealthRequest",
 			Handler:    _Raft_HealthRequest_Handler,
+		},
+		{
+			MethodName: "RemoveMember",
+			Handler:    _Raft_RemoveMember_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

@@ -38,12 +38,13 @@ func genYamlBase(name string, bootstrap bool, portShift int, storeInMem bool, cb
 	cfg.RaftAddr = fmt.Sprintf("127.0.0.1:%d", 18300+portShift)
 	cfg.GrpcApiAddr = fmt.Sprintf("127.0.0.1:%d", 18310+portShift)
 	cfg.HttpApiAddr = fmt.Sprintf("127.0.0.1:%d", 18320+portShift)
+	cfg.InnerAddr = fmt.Sprintf("127.0.0.1:%d", 18330+portShift)
 	cfg.Bootstrap = bootstrap
 	cfg.BootstrapExpect = 0
 	cfg.JoinAddr = ""
 	cfg.TryJoinTime = 3
 	if !bootstrap {
-		cfg.JoinAddr = "127.0.0.1:18310"
+		cfg.JoinAddr = "127.0.0.1:18330"
 	}
 	cfg.NodeId = fmt.Sprintf("n%d", portShift)
 	cfg.StoreInMem = storeInMem

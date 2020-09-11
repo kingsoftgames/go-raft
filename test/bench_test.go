@@ -64,6 +64,7 @@ func Test_markSingleAppHttp(t *testing.T) {
 	})
 }
 func Test_ClusterAppGRpc(t *testing.T) {
+	common.OpenDebugLog()
 	genTestClusterAppGrpcYaml()
 	clusterAppTemplate(t, func() {
 		c := []*testGRpcClient{newClient("127.0.0.1:18310"), newClient("127.0.0.1:18311")}
@@ -199,7 +200,7 @@ func (th *testGRpcClient) Get() *testClient {
 
 func newClient(addr string) *testGRpcClient {
 	c := app.NewGRpcClient(2000, NewTestClient)
-	if err := c.Connect(addr); err != nil {
+	if err := c.Connect(addr, ""); err != nil {
 		log.Fatalf("connect failed,%s", err.Error())
 	}
 	return &testGRpcClient{

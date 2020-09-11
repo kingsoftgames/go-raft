@@ -22,7 +22,8 @@ func GetHandleFunctionName(message protoreflect.ProtoMessage) string {
 }
 
 type CheckWork struct {
-	s atomic.Value
+	s    atomic.Value
+	Name string
 }
 
 func (th *CheckWork) Check() bool {
@@ -33,13 +34,13 @@ func (th *CheckWork) Check() bool {
 }
 func (th *CheckWork) Work() {
 	if !th.Check() {
-		logrus.Infof("Work")
+		logrus.Infof("[%s]Work", th.Name)
 		th.s.Store(true)
 	}
 }
 func (th *CheckWork) Idle() {
 	if th.Check() {
-		logrus.Infof("Idle")
+		logrus.Infof("[%s]Idle", th.Name)
 		th.s.Store(false)
 	}
 }

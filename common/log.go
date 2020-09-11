@@ -100,8 +100,8 @@ var once sync.Once
 
 func InitLog(config *LogConfigure) {
 	once.Do(func() {
-		gin.DefaultWriter = NewFileLog(config, "gin")
-		gin.DefaultErrorWriter = NewFileLog(config, "gin_err")
+		gin.DefaultWriter = NewFileLog(config, "", "gin")
+		gin.DefaultErrorWriter = NewFileLog(config, "", "gin_err")
 		level, err := logrus.ParseLevel(config.Level)
 		if err != nil {
 			level = logrus.InfoLevel
@@ -171,15 +171,22 @@ func (th *StdErrHook) Fire(entry *logrus.Entry) error {
 
 type LogFileWrite struct {
 	logger *logrus.Logger
+	tag    string
 }
 
 func (th *LogFileWrite) Write(p []byte) (n int, err error) {
-	th.logger.Info(string(p))
+	if len(th.tag) > 0 {
+		th.logger.WithField("logger", th.tag).Infof(string(p))
+	} else {
+		th.logger.Info(string(p))
+	}
 	return 0, nil
 }
 
-func NewFileLog(config *LogConfigure, name string) *LogFileWrite {
-	l := &LogFileWrite{}
+func NewFileLog(config *LogConfigure, tag, name string) *LogFileWrite {
+	l := &LogFileWrite{
+		tag: tag,
+	}
 	l.logger = logrus.New()
 	l.logger.SetOutput(os.Stdout)
 	hook, err := lumberjackrus.NewHook(
