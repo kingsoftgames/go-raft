@@ -8,9 +8,8 @@ type Ticker struct {
 
 func (th *Ticker) Stop() {
 	if th.exit != nil {
-		go func() {
-			th.exit <- struct{}{}
-		}()
+		close(th.exit)
+		th.exit = nil
 	}
 }
 
@@ -20,14 +19,13 @@ func NewTicker(duration time.Duration, cb func()) *Ticker {
 
 func NewTickerWithGo(duration time.Duration, cb func(), goFunc GoFunc) *Ticker {
 	ticker := &Ticker{
-		exit: make(chan struct{}, 1),
+		exit: make(chan struct{}),
 	}
 	t := time.NewTicker(duration)
 	if goFunc == nil {
 		goFunc = &DefaultGoFunc{}
 	}
 	goFunc.Go(func() {
-		defer t.Stop()
 		for {
 			select {
 			case <-t.C:
@@ -52,17 +50,13 @@ func NewTimer(duration time.Duration, cb func()) *Timer {
 }
 func NewTimerWithGo(duration time.Duration, cb func(), goFunc GoFunc) *Timer {
 	timer := &Timer{
-		exit: make(chan struct{}, 1),
+		exit: make(chan struct{}),
 	}
 	t := time.NewTimer(duration)
 	if goFunc == nil {
 		goFunc = &DefaultGoFunc{}
 	}
 	goFunc.Go(func() {
-		defer func() {
-			close(timer.exit)
-			timer.exit = nil
-		}()
 		select {
 		case <-t.C:
 			cb()

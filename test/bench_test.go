@@ -6,11 +6,12 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"math/rand"
 	"net/http"
 	"strconv"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -22,7 +23,7 @@ import (
 )
 
 var count = 500
-var timeout = 50000 * time.Millisecond
+var timeout = 10 * time.Second
 
 func Test_markSingleAppGRpc(t *testing.T) {
 	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
@@ -190,31 +191,6 @@ func Test_ClusterApp2Http(t *testing.T) {
 	})
 }
 
-type testGRpcClient struct {
-	c *app.GRpcClient
-}
-
-func (th *testGRpcClient) Get() *testClient {
-	return th.c.Get().(*testClient)
-}
-
-func newClient(addr string) *testGRpcClient {
-	c := app.NewGRpcClient(2000, NewTestClient)
-	if err := c.Connect(addr, ""); err != nil {
-		log.Fatalf("connect failed,%s", err.Error())
-	}
-	return &testGRpcClient{
-		c: c,
-	}
-}
-func newTestUnit() *TestUnit {
-	return &TestUnit{
-		A: "123",
-		B: 1,
-		C: 2,
-		D: "321",
-	}
-}
 func httpPost(hash string, url, contentType string, body io.Reader) (resp *http.Response, err error) {
 	c := http.DefaultClient
 	ctx := context.WithValue(context.Background(), "hash", hash)
@@ -232,7 +208,7 @@ func httpPost(hash string, url, contentType string, body io.Reader) (resp *http.
 func httpClient(t *testing.T, addr, path string, key string, writeTimes int, hash bool) {
 	var req interface{}
 	switch path {
-	case "/test.GetReq":
+	case "/test/GetReq":
 		req = &GetReq{
 			A: key,
 		}
@@ -264,7 +240,23 @@ func httpClient(t *testing.T, addr, path string, key string, writeTimes int, has
 	}
 }
 
+var errlog sync.Once
+
+var cnt, totalTime int64
+
+func printAveQ(t *testing.T) {
+	t.Logf("cnt %d,total %d,ave %v", cnt, totalTime, totalTime/cnt)
+}
+
 func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTimes int, hash bool) {
+	n := time.Now().UnixNano()
+	defer func() {
+		atomic.AddInt64(&totalTime, int64((time.Now().UnixNano()-n)/1e6))
+		atomic.AddInt64(&cnt, 1)
+		//if _n := time.Now().UnixNano() - n; _n > 3*1e9 {
+		//	t.Logf("runClient,%s,%s,%vms", cmd, key, _n/1e6)
+		//}
+	}()
 	header := &Header{}
 	if hash {
 		header.Hash = key
@@ -279,7 +271,10 @@ func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTim
 			C:      0,
 		})
 		if e != nil {
-			t.Logf("send err ,%s", e.Error())
+			//errlog.Do(func() {
+			logrus.Errorf("get err ,%s,%s", key, e.Error())
+			//})
+			//t.Logf("send err ,%s", e.Error())
 		} else {
 			//t.Logf("getrsp")
 		}
@@ -288,13 +283,36 @@ func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTim
 		for i := 0; i < writeTimes; i++ {
 			A[fmt.Sprintf("%s_%d", key, i)] = newTestUnit()
 		}
-		_, e := c.Get().SetRequest(ctx, &SetReq{
+		rsp, e := c.Get().SetRequest(ctx, &SetReq{
 			Header: header,
 			A:      A,
+			Timeline: []*TimeLineUnit{&TimeLineUnit{
+				Tag:      "Send",
+				Timeline: time.Now().UnixNano() / 1e3,
+			}},
 		})
 		if e != nil {
-			t.Logf("send err ,%s", e.Error())
+			//errlog.Do(func() {
+			logrus.Errorf("set err ,%s,%s", key, e.Error())
+			//})
 		} else {
+			if app.DebugTraceFutureLine {
+				rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
+					Tag:      "Result",
+					Timeline: time.Now().UnixNano() / 1e3,
+				})
+				var dif int64
+				timeline := make([]string, 0)
+				for i := len(rsp.TimeLine) - 1; i > 0; i-- {
+					from := rsp.TimeLine[i-1]
+					to := rsp.TimeLine[i]
+					dif += to.Timeline - from.Timeline
+					timeline = append(timeline, fmt.Sprintf("%s ==> %s %d", from.Tag, to.Tag, to.Timeline-from.Timeline))
+				}
+				if dif > 3000*1e3 {
+					t.Logf("Timeline(%d): %s", dif, strings.Join(timeline, " , "))
+				}
+			}
 			//t.Logf("setrsp, %v", *rsp)
 		}
 	case "del":
@@ -303,13 +321,16 @@ func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTim
 			A:      key,
 		})
 		if e != nil {
-			t.Logf("send err ,%s", e.Error())
+			//errlog.Do(func() {
+			logrus.Errorf("del err ,%s,%s", key, e.Error())
+			//})
 		} else {
 			//t.Logf("delrsp, %v", *rsp)
 		}
 	default:
 	}
 }
+
 func init() {
 	rand.Seed(time.Now().UnixNano())
 }

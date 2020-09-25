@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ import (
 
 const (
 	retainSnapshotCount = 2
-	raftTimeout         = 10 * time.Second
+	raftTimeout         = 4 * time.Second
 	raftLogCacheSize    = 512
 )
 
@@ -79,6 +80,9 @@ type RaftStore struct {
 
 	leader   bool
 	exitWait sync.WaitGroup
+
+	statTicker *common.Ticker
+	stopped    bool
 }
 
 func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoFunc) *RaftStore {
@@ -89,6 +93,7 @@ func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoF
 		servers:  raftServers{},
 		goFunc:   goFunc,
 		exitChan: make(chan struct{}, 1),
+		stopped:  false,
 	}
 }
 func (th *RaftStore) apply(cmd *inner.ApplyCmd) raft.ApplyFuture {
@@ -262,6 +267,8 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	config.LocalID = raft.ServerID(th.config.NodeId)
 	config.LogOutput = logOutput
 	config.LogLevel = logLevel
+	config.SnapshotInterval = 100 * time.Second
+	config.ShutdownOnRemove = false
 	//config.SnapshotInterval = 10 * time.Millisecond
 	addr, err := net.ResolveTCPAddr("tcp", th.config.RaftAddr)
 	if err != nil {
@@ -286,7 +293,8 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 			logStore = raft.NewInmemStore()
 		}
 		stableStore = raft.NewInmemStore()
-		snapshot = raft.NewInmemSnapshotStore()
+		//snapshot = raft.NewInmemSnapshotStore()
+		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
 	} else {
 		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
 		if err != nil {
@@ -328,6 +336,13 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	th.raft = ra
 	th.runObserver()
 	return nil
+}
+func (th *RaftStore) clearStoreCache() {
+	if err := os.RemoveAll(th.config.StoreDir); err != nil {
+		logrus.Errorf("[%s]clearStoreCache,err,%s", th.config.NodeId, err.Error())
+	} else {
+		logrus.Infof("[%s]clearStoreCache finished", th.config.NodeId)
+	}
 }
 func (th *RaftStore) AddServer(id, addr string) {
 	th.servers.put(id, addr)
@@ -388,6 +403,10 @@ func (th *RaftStore) runObserver() {
 			}
 		}
 	})
+
+	th.statTicker = common.NewTicker(5*time.Second, func() {
+		logrus.Debugf("[%s][%v]%v", th.config.NodeId, th.raft.State(), th.raft.Stats())
+	})
 }
 func (th *RaftStore) eventEmit(ev *common.SafeEvent, arg interface{}) {
 	if th.runChan != nil {
@@ -414,10 +433,15 @@ func (th *RaftStore) IsFollower() bool {
 	return th.raft.State() == raft.Follower
 }
 func (th *RaftStore) release() {
+	th.raft = nil
 }
 
 //阻塞的
 func (th *RaftStore) Shutdown() {
+	if th.stopped {
+		return
+	}
+	th.stopped = true
 	if th.raft != nil {
 		th.transport.Close()
 		f := th.raft.Shutdown()
@@ -435,6 +459,11 @@ func (th *RaftStore) Shutdown() {
 		if th.logStore != nil {
 			th.logStore.Close()
 		}
+		if th.statTicker != nil {
+			th.statTicker.Stop()
+			th.statTicker = nil
+		}
+		th.clearStoreCache()
 	}
 }
 func (th *RaftStore) GetNodes() []raft.Server {
@@ -443,9 +472,13 @@ func (th *RaftStore) GetNodes() []raft.Server {
 	}
 	return nil
 }
-func (th *RaftStore) ExistsNode(nodeId string) bool {
-	_, ok := th.peers.Load(raft.ServerID(nodeId))
-	return ok
+
+func (th *RaftStore) ReloadNode() {
+	nodes := th.GetNodes()
+	logrus.Debugf("[%s]ReloadNode,%v", th.config.NodeId, nodes)
+	for _, node := range nodes {
+		th.peers.Store(node.ID, node.Address)
+	}
 }
 
 type storeFsmSnapshot struct {

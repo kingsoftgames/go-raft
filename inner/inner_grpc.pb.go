@@ -24,6 +24,7 @@ type RaftClient interface {
 	TransGrpcRequest(ctx context.Context, in *TransGrpcReq, opts ...grpc.CallOption) (*TransGrpcRsp, error)
 	HealthRequest(ctx context.Context, in *HealthReq, opts ...grpc.CallOption) (*HealthRsp, error)
 	RemoveMember(ctx context.Context, in *RemoveMemberReq, opts ...grpc.CallOption) (*RemoveMemberRsp, error)
+	ExitRequest(ctx context.Context, in *ExitReq, opts ...grpc.CallOption) (*ExitRsp, error)
 }
 
 type raftClient struct {
@@ -88,6 +89,15 @@ func (c *raftClient) RemoveMember(ctx context.Context, in *RemoveMemberReq, opts
 	return out, nil
 }
 
+func (c *raftClient) ExitRequest(ctx context.Context, in *ExitReq, opts ...grpc.CallOption) (*ExitRsp, error) {
+	out := new(ExitRsp)
+	err := c.cc.Invoke(ctx, "/inner.Raft/ExitRequest", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // RaftServer is the server API for Raft service.
 // All implementations must embed UnimplementedRaftServer
 // for forward compatibility
@@ -99,6 +109,7 @@ type RaftServer interface {
 	TransGrpcRequest(context.Context, *TransGrpcReq) (*TransGrpcRsp, error)
 	HealthRequest(context.Context, *HealthReq) (*HealthRsp, error)
 	RemoveMember(context.Context, *RemoveMemberReq) (*RemoveMemberRsp, error)
+	ExitRequest(context.Context, *ExitReq) (*ExitRsp, error)
 	mustEmbedUnimplementedRaftServer()
 }
 
@@ -123,6 +134,9 @@ func (*UnimplementedRaftServer) HealthRequest(context.Context, *HealthReq) (*Hea
 }
 func (*UnimplementedRaftServer) RemoveMember(context.Context, *RemoveMemberReq) (*RemoveMemberRsp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method RemoveMember not implemented")
+}
+func (*UnimplementedRaftServer) ExitRequest(context.Context, *ExitReq) (*ExitRsp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method ExitRequest not implemented")
 }
 func (*UnimplementedRaftServer) mustEmbedUnimplementedRaftServer() {}
 
@@ -238,6 +252,24 @@ func _Raft_RemoveMember_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Raft_ExitRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(ExitReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(RaftServer).ExitRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/inner.Raft/ExitRequest",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(RaftServer).ExitRequest(ctx, req.(*ExitReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Raft_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "inner.Raft",
 	HandlerType: (*RaftServer)(nil),
@@ -265,6 +297,10 @@ var _Raft_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "RemoveMember",
 			Handler:    _Raft_RemoveMember_Handler,
+		},
+		{
+			MethodName: "ExitRequest",
+			Handler:    _Raft_ExitRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

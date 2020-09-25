@@ -1,0 +1,4 @@
+region: "r1"
+datacenter: "d1"
+count: "3"
+artifact: "http://localhost:8080/test1.tar.gz"

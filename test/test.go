@@ -2,6 +2,9 @@ package test
 
 import (
 	"os"
+	"strings"
+
+	"github.com/sirupsen/logrus"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/app"
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -61,10 +64,21 @@ func (th *testApp) get(id string) *TestUnit {
 }
 
 func clearCache() {
+	logrus.Debugf("clearCache")
 	os.RemoveAll("cache/")
 	os.Mkdir("cache/", os.ModePerm)
 }
+func isTest() bool {
+	for _, arg := range os.Args {
+		if strings.Contains(arg, "test.v") {
+			return true
+		}
+	}
+	return false
+}
 func init() {
-	clearCache()
+	if isTest() {
+		clearCache()
+	}
 	app.RegisterApp(testApp{})
 }

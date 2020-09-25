@@ -1,12 +1,18 @@
 package common
 
 import (
+	"errors"
 	"fmt"
 	"hash/fnv"
 	"sync"
 	"time"
 
 	"github.com/sirupsen/logrus"
+)
+
+var (
+	ErrTimeout  = errors.New("timer out")
+	ErrShutdown = errors.New("shutdown")
 )
 
 type RunChanType chan func()
@@ -17,7 +23,7 @@ type QPS struct {
 type LogicChan struct {
 	GracefulGoFunc
 	runChan  []RunChanType
-	exitChan []chan struct{}
+	exitChan chan struct{}
 	qps      []QPS
 	goFunc   GoFunc
 }
@@ -28,10 +34,9 @@ func (th *LogicChan) Init(maxChan int, goFunc GoFunc) {
 	}
 	th.goFunc = goFunc
 	th.runChan = make([]RunChanType, maxChan)
-	th.exitChan = make([]chan struct{}, maxChan)
+	th.exitChan = make(chan struct{})
 	th.qps = make([]QPS, maxChan)
 	for i := 0; i < len(th.runChan); i++ {
-		th.exitChan[i] = make(chan struct{}, 1)
 		th.runChan[i] = make(RunChanType, 4096)
 	}
 	th.UpdateExitWait(&GracefulExit{})
@@ -39,28 +44,39 @@ func (th *LogicChan) Init(maxChan int, goFunc GoFunc) {
 func (th *LogicChan) Get() RunChanType {
 	return th.runChan[0]
 }
-func (th *LogicChan) HandleNoHash(h func()) {
-	th.Handle(0, h)
+func (th *LogicChan) HandleNoHash(timeout time.Duration, h func(err error)) {
+	th.Handle(0, timeout, h)
 }
-func (th *LogicChan) HandleWithHash(hash string, h func()) {
+func (th *LogicChan) HandleWithHash(hash string, timeout time.Duration, h func(err error)) {
 	hs := fnv.New32()
 	_, _ = hs.Write([]byte(hash))
-	th.Handle(int(hs.Sum32()), h)
+	th.Handle(int(hs.Sum32()), timeout, h)
 }
-func (th *LogicChan) Handle(hash int, h func()) {
+func (th *LogicChan) Handle(hash int, timeout time.Duration, h func(err error)) {
 	if th.runChan == nil {
-		th.goFunc.Go(h)
+		th.goFunc.Go(func() {
+			h(nil)
+		})
 		return
+	}
+	var timer <-chan time.Time
+	if timeout > 0 {
+		timer = time.After(timeout)
 	}
 	i := hash % len(th.runChan)
 	th.Go(func() {
-		th.runChan[i] <- h
+		select {
+		case <-timer:
+			h(ErrTimeout)
+		case th.runChan[i] <- func() { h(nil) }:
+		case <-th.exitChan:
+			h(ErrShutdown)
+		}
 	})
 }
 func (th *LogicChan) Start() {
 	defer func() {
 		th.runChan = nil
-		th.exitChan = nil
 	}()
 	var w sync.WaitGroup
 	for i := 0; i < len(th.runChan); i++ {
@@ -69,7 +85,6 @@ func (th *LogicChan) Start() {
 			idx := p[0].(int)
 			defer func() {
 				close(th.runChan[idx])
-				close(th.exitChan[idx])
 				w.Done()
 			}()
 			for {
@@ -85,7 +100,7 @@ func (th *LogicChan) Start() {
 					if len(th.runChan[idx]) > 0 {
 						break
 					}
-				case <-th.exitChan[idx]:
+				case <-th.exitChan:
 					logrus.Debugf("idx(%d) exit", idx)
 					return
 				}
@@ -96,11 +111,7 @@ func (th *LogicChan) Start() {
 }
 func (th *LogicChan) Stop() {
 	th.Wait()
-	if th.exitChan != nil {
-		for i := 0; i < len(th.exitChan); i++ {
-			th.exitChan[i] <- struct{}{}
-		}
-	}
+	close(th.exitChan)
 }
 func (th *LogicChan) GetQPS() []string {
 	info := make([]string, len(th.qps)+1)

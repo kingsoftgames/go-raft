@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/gin-gonic/gin"
 
@@ -98,15 +99,18 @@ func newTextFormat(color bool) *textFormat {
 
 var once sync.Once
 
+func getLogLevel(level string) logrus.Level {
+	l, err := logrus.ParseLevel(level)
+	if err != nil {
+		l = logrus.InfoLevel
+	}
+	return l
+}
 func InitLog(config *LogConfigure) {
 	once.Do(func() {
 		gin.DefaultWriter = NewFileLog(config, "", "gin")
 		gin.DefaultErrorWriter = NewFileLog(config, "", "gin_err")
-		level, err := logrus.ParseLevel(config.Level)
-		if err != nil {
-			level = logrus.InfoLevel
-		}
-		logrus.SetLevel(level)
+		logrus.SetLevel(getLogLevel(config.Level))
 		logrus.SetOutput(os.Stdout)
 		logrus.SetFormatter(newTextFormat(true))
 		addFileHook(config)
@@ -114,10 +118,7 @@ func InitLog(config *LogConfigure) {
 }
 
 func addFileHook(config *LogConfigure) error {
-	level, err := logrus.ParseLevel(config.Level)
-	if err != nil {
-		level = logrus.InfoLevel
-	}
+	level := getLogLevel(config.Level)
 	hook, err := lumberjackrus.NewHook(
 		&lumberjackrus.LogFile{
 			Filename:  fmt.Sprintf("%s/info.log", config.Path),
@@ -127,7 +128,9 @@ func addFileHook(config *LogConfigure) error {
 			LocalTime: false,
 		},
 		level,
-		&logrus.JSONFormatter{},
+		&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339Nano,
+		},
 		&lumberjackrus.LogFileOpts{
 			logrus.ErrorLevel: &lumberjackrus.LogFile{
 				Filename:  fmt.Sprintf("%s/error.log", config.Path),
@@ -198,7 +201,9 @@ func NewFileLog(config *LogConfigure, tag, name string) *LogFileWrite {
 			LocalTime: false,
 		},
 		logrus.DebugLevel,
-		&logrus.JSONFormatter{},
+		&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339Nano,
+		},
 		nil,
 	)
 	if err != nil {

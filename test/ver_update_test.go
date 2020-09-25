@@ -62,7 +62,7 @@ func clusterAppVerUpdate(exitWait *common.GracefulExit, t *testing.T, nodeNum in
 			return
 		}
 		appNode[i].Start()
-		time.Sleep(2 * time.Second)
+		time.Sleep(3 * time.Second)
 	}
 	exitWait.Wait()
 	for _, a := range appNode {
@@ -72,12 +72,12 @@ func clusterAppVerUpdate(exitWait *common.GracefulExit, t *testing.T, nodeNum in
 	}
 }
 func Test_VerUpdate(t *testing.T) {
-	//common.OpenDebugLog()
+	app.DebugTraceFutureLine = true
+	//common.OpenDebugLog()r
 	var exitWait common.GracefulExit
 	clusterAppVerUpdate(&exitWait, t, 3, 0, "1", "", func() {
 		//
-		n := time.Now().UnixNano()
-		for _i := 0; _i < 500; _i++ {
+		for _i := 0; _i < 1; _i++ {
 			time.Sleep(10 * time.Millisecond)
 			var w sync.WaitGroup
 			c := []*testGRpcClient{newClient("127.0.0.1:18310"), newClient("127.0.0.1:18311"), newClient("127.0.0.1:18312")}
@@ -96,13 +96,57 @@ func Test_VerUpdate(t *testing.T) {
 			}
 			w.Wait()
 		}
-		t.Logf("Cnt %f ms", float64(time.Now().UnixNano()-n)/10e6-5000)
+		printAveQ(t)
+		t.Logf(app.GetFutureAve())
 		t.Logf("Over")
-		time.Sleep(5 * time.Second)
-
-		clusterAppVerUpdate(&exitWait, t, 1, 100, "2", "127.0.0.1:18330", func() {
+		time.Sleep(100 * time.Second)
+		//
+		var exitWait2 common.GracefulExit
+		clusterAppVerUpdate(&exitWait2, t, 1, 100, "2", "127.0.0.1:18330", func() {
 			t.Logf("Test_VerUpdate Ok")
-			time.Sleep(50 * time.Second)
+			var w sync.WaitGroup
+			c := []*testGRpcClient{newClient("127.0.0.1:18410")}
+
+			for i := 0; i < count*200; i++ {
+				w.Add(1)
+				go func(idx int) {
+					defer w.Done()
+					key := strconv.Itoa(rand.Int())
+					runClient(t, c[idx%len(c)], "set", key, 1, true)
+					runClient(t, c[idx%len(c)], "get", key, 1, true)
+					runClient(t, c[idx%len(c)], "del", key, 1, true)
+					runClient(t, c[idx%len(c)], "get", key, 1, true)
+				}(i)
+			}
+			w.Wait()
+			printAveQ(t)
+			t.Logf(app.GetFutureAve())
+			time.Sleep(20 * time.Second)
 		})
 	})
+	printAveQ(t)
 }
+
+//
+//func (th *ImplementedTestServer) SetRequest(ctx context.Context, req *SetReq) (*SetRsp, error) {
+//	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &SetRsp{TimeLine: []*TimeLineUnit{}})
+//	f.Timeline = make([]app.TimelineInfo, 0)
+//	f.Timeline = append(f.Timeline, app.TimelineInfo{Tag: req.Timeline[0].Tag, T: req.Timeline[0].Timeline})
+//	f.AddTimeLine("Receive")
+//	th.app.GRpcHandle(f)
+//	if f.Error() != nil {
+//		return nil, f.Error()
+//	}
+//	rsp := f.Response().(*SetRsp)
+//	for _, timeline := range f.Timeline {
+//		rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
+//			Tag:      timeline.Tag,
+//			Timeline: timeline.T,
+//		})
+//	}
+//	rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
+//		Tag:      "ResultSend",
+//		Timeline: time.Now().UnixNano() / 1e3,
+//	})
+//	return rsp, nil
+//}

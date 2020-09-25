@@ -4,6 +4,7 @@ package test
 
 import (
 	context "context"
+	"time"
 
 	app "git.shiyou.kingsoft.com/infra/go-raft/app"
 )
@@ -23,12 +24,26 @@ func (th *ImplementedTestServer) GetRequest(ctx context.Context, req *GetReq) (*
 	return f.Response().(*GetRsp), nil
 }
 func (th *ImplementedTestServer) SetRequest(ctx context.Context, req *SetReq) (*SetRsp, error) {
-	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &SetRsp{})
+	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &SetRsp{TimeLine: []*TimeLineUnit{}})
+	f.Timeline = make([]app.TimelineInfo, 0)
+	f.Timeline = append(f.Timeline, app.TimelineInfo{Tag: req.Timeline[0].Tag, T: req.Timeline[0].Timeline})
+	f.AddTimeLine("Receive")
 	th.app.GRpcHandle(f)
 	if f.Error() != nil {
 		return nil, f.Error()
 	}
-	return f.Response().(*SetRsp), nil
+	rsp := f.Response().(*SetRsp)
+	for _, timeline := range f.Timeline {
+		rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
+			Tag:      timeline.Tag,
+			Timeline: timeline.T,
+		})
+	}
+	rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
+		Tag:      "ResultSend",
+		Timeline: time.Now().UnixNano() / 1e3,
+	})
+	return rsp, nil
 }
 func (th *ImplementedTestServer) DelRequest(ctx context.Context, req *DelReq) (*DelRsp, error) {
 	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &DelRsp{})

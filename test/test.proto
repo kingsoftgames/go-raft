@@ -43,10 +43,12 @@ message TestUnit{
 message SetReq{
   Header header = 1;
   map<string,TestUnit> a = 2;
+  repeated TimeLineUnit timeline = 3;
 }
 message SetRsp{
   string a = 1;
   TestUnit b = 2;
+  repeated TimeLineUnit timeLine = 3;
 }
 message DelReq{
   Header header = 1;
@@ -60,4 +62,9 @@ message CrashReq{
   Header header = 1;
 }
 message CrashRsp{
+}
+
+message TimeLineUnit{
+  string tag = 1;
+  int64 timeline = 2;
 }

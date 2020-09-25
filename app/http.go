@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"reflect"
 	"strings"
-	"time"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/inner"
 	"github.com/sirupsen/logrus"
@@ -56,6 +55,7 @@ func (th *httpApi) init(addr string) {
 	}
 
 	th.mainApp.Go(func() {
+		logrus.Infof("http begin listen %s", addr)
 		if e := th.srv.ListenAndServe(); e != nil {
 			if e == http.ErrServerClosed {
 				logrus.Infof("http server %s closed", addr)
@@ -66,6 +66,8 @@ func (th *httpApi) init(addr string) {
 	})
 }
 func (th *httpApi) close() {
+	logrus.Infof("[%s]httpApi.close", th.mainApp.config.NodeId)
+	defer logrus.Infof("[%s]httpApi.close finished", th.mainApp.config.NodeId)
 	if th.srv != nil {
 		if err := th.srv.Close(); err != nil {
 			logrus.Errorf("httpApi.close err,%s", err.Error())
@@ -136,7 +138,7 @@ func (th *httpApi) post(path string, hd *HandlerValue) {
 					ctx.JSON(403, newErr("can not work"))
 					return
 				}
-				_ctx, _ := context.WithTimeout(ctx, grpcTimeoutMs*time.Millisecond)
+				_ctx, _ := context.WithTimeout(ctx, grpcTimeout)
 				rsp, e := client.TransHttpRequest(_ctx, req)
 				if e == nil {
 					ctx.Data(200, sContentType, rsp.Data)
@@ -173,7 +175,7 @@ func (th *httpApi) handle(ctx context.Context, hd *HandlerValue, data io.Reader)
 		return fmt.Errorf("Json Decode err : " + e.Error()), nil
 	}
 	future := NewHttpReplyFuture()
-	h := func() {
+	h := func(err error) {
 		hd.fn.Call([]reflect.Value{reflect.ValueOf(th.mainApp.app), req, rsp, reflect.ValueOf(rtv)})
 		if rtv.Futures.Len() != 0 {
 			if err := rtv.Futures.Error(); err != nil {
@@ -183,7 +185,7 @@ func (th *httpApi) handle(ctx context.Context, hd *HandlerValue, data io.Reader)
 		future.Done()
 	}
 	//th.mainApp.runChan <- h
-	handleContext(&th.mainApp.runLogic, ctx, h)
+	handleContext(&th.mainApp.runLogic, ctx, handleTimeout, h)
 	future.Wait()
 	return nil, rsp.Interface()
 }

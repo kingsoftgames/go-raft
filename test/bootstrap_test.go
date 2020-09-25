@@ -170,7 +170,8 @@ func clusterAppBootstrapExpectJoinFile(t *testing.T, nodeNum int, clientFunc fun
 	}
 }
 func Test_bootstrapExpectJoinFile(t *testing.T) {
-	clusterAppBootstrapExpectJoinFile(t, 5, func() {
+	clusterAppBootstrapExpectJoinFile(t, 3, func() {
 		t.Logf("Test_bootstrapExpectJoinFile Ok")
+		time.Sleep(3 * time.Second)
 	})
 }

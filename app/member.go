@@ -42,7 +42,7 @@ type MemberList struct {
 	raftAddrMap  map[string]string
 	innerAddrMap map[string]string
 
-	OnConEvent common.SafeEvent
+	OnAddEvent common.SafeEvent
 }
 
 func (th *MemberList) Len() int {
@@ -51,13 +51,19 @@ func (th *MemberList) Len() int {
 	return len(th.mem)
 }
 func (th *MemberList) Foreach(cb func(member *Member)) {
+	mem := make([]*Member, 0)
 	th.l.RLock()
-	defer th.l.RUnlock()
 	for _, m := range th.mem {
+		mem = append(mem, m)
+	}
+	th.l.RUnlock()
+	for _, m := range mem {
 		cb(m)
 	}
 }
 func (th *MemberList) GetByRaftAddr(addr string) *Member {
+	logrus.Debugf("[%s]MemberList.GetByRaftAddr,%s", th.selfNodeId, addr)
+	defer logrus.Debugf("[%s]MemberList.GetByRaftAddr finished,%s", th.selfNodeId, addr)
 	th.l.RLock()
 	defer th.l.RUnlock()
 	if th.raftAddrMap == nil {
@@ -69,6 +75,8 @@ func (th *MemberList) GetByRaftAddr(addr string) *Member {
 	return nil
 }
 func (th *MemberList) GetByGrpcAddr(addr string) *Member {
+	logrus.Debugf("[%s]MemberList.GetByGrpcAddr,%s", th.selfNodeId, addr)
+	defer logrus.Debugf("[%s]MemberList.GetByGrpcAddr finished,%s", th.selfNodeId, addr)
 	th.l.RLock()
 	defer th.l.RUnlock()
 	if th.innerAddrMap == nil {
@@ -86,11 +94,15 @@ func (th *MemberList) get(nodeId string) *Member {
 	return th.mem[nodeId]
 }
 func (th *MemberList) Get(nodeId string) *Member {
+	logrus.Debugf("[%s]MemberList.Get,%s", th.selfNodeId, nodeId)
+	defer logrus.Debugf("[%s]MemberList.Get finished,%s", th.selfNodeId, nodeId)
 	th.l.RLock()
 	defer th.l.RUnlock()
 	return th.get(nodeId)
 }
 func (th *MemberList) Add(m *Member) error {
+	//logrus.Debugf("[%s]MemberList.Add,%s", th.selfNodeId, m.NodeId)
+	//defer logrus.Debugf("[%s]MemberList.Add finished,%s", th.selfNodeId, m.NodeId)
 	th.l.Lock()
 	defer th.l.Unlock()
 	if th.mem == nil {
@@ -108,11 +120,11 @@ func (th *MemberList) Add(m *Member) error {
 		return nil
 	}
 	if th.selfNodeId != m.NodeId { //not need connect self node
-		m.Con = NewInnerCon(m.InnerAddr, poolMaxConnect, grpcTimeoutMs, th.selfNodeId)
+		m.Con = NewInnerCon(m.InnerAddr, poolMaxConnect, grpcTimeout, th.selfNodeId)
 		//if err := m.Con.Connect(m.GrpcAddr); err != nil {
 		//	return err
 		//}
-		//th.OnConEvent.Emit(m)
+		th.OnAddEvent.Emit(m)
 	}
 	th.mem[m.NodeId] = m
 	th.raftAddrMap[m.RaftAddr] = m.NodeId
@@ -121,6 +133,8 @@ func (th *MemberList) Add(m *Member) error {
 	return nil
 }
 func (th *MemberList) Remove(nodeId string) bool {
+	logrus.Debugf("[%s]MemberList.Remove,%s", th.selfNodeId, nodeId)
+	defer logrus.Debugf("[%s]MemberList.Remove finished,%s", th.selfNodeId, nodeId)
 	th.l.Lock()
 	defer th.l.Unlock()
 	m := th.get(nodeId)
@@ -136,15 +150,15 @@ func (th *MemberList) Remove(nodeId string) bool {
 	return true
 }
 func (th *MemberList) LeaveToAll(nodeId string) {
-	th.l.RLock()
-	defer th.l.RUnlock()
-	for _, m := range th.mem {
+	logrus.Debugf("[%s]MemberList.LeaveToAll,%s", th.selfNodeId, nodeId)
+	defer logrus.Debugf("[%s]MemberList.LeaveToAll finished,%s", th.selfNodeId, nodeId)
+	th.Foreach(func(m *Member) {
 		if th.selfNodeId == m.NodeId {
-			continue
+			return
 		}
 		m.Con.GetRaftClient(func(client inner.RaftClient) {
 			if client != nil {
-				ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs*time.Millisecond)
+				ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
 				msg := &inner.RemoveMemberReq{
 					NodeId: nodeId,
 				}
@@ -158,14 +172,15 @@ func (th *MemberList) LeaveToAll(nodeId string) {
 				}
 			}
 		})
-	}
+	})
 }
 func (th *MemberList) SynMemberToAll(bootstrap bool, bootstrapExpect int) error {
-	ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs*time.Millisecond)
+	ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
 	msg := &inner.SynMemberReq{
 		Bootstrap:       bootstrap,
 		BootstrapExpect: int32(bootstrapExpect),
 		Mem:             make([]*inner.Member, 0),
+		NodeId:          th.selfNodeId,
 	}
 	th.Foreach(func(member *Member) {
 		msg.Mem = append(msg.Mem, &inner.Member{
@@ -176,11 +191,9 @@ func (th *MemberList) SynMemberToAll(bootstrap bool, bootstrapExpect int) error 
 			LastIndex: member.LastIndex,
 		})
 	})
-	th.l.RLock()
-	defer th.l.RUnlock()
-	for _, m := range th.mem {
+	th.Foreach(func(m *Member) {
 		if th.selfNodeId == m.NodeId {
-			continue
+			return
 		}
 		m.Con.GetRaftClient(func(client inner.RaftClient) {
 			if client != nil {
@@ -192,6 +205,6 @@ func (th *MemberList) SynMemberToAll(bootstrap bool, bootstrapExpect int) error 
 				}
 			}
 		})
-	}
+	})
 	return nil
 }

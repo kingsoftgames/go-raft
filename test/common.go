@@ -1,9 +1,12 @@
 package test
 
 import (
+	context "context"
 	"fmt"
 	"io/ioutil"
+	"math/rand"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -13,6 +16,7 @@ import (
 
 	"git.shiyou.kingsoft.com/infra/go-raft/app"
 	"github.com/hashicorp/raft"
+	"github.com/sirupsen/logrus"
 )
 
 func genConfig(content string, name string) string {
@@ -115,7 +119,6 @@ func clusterAppTemplate(t *testing.T, clientFunc func()) {
 				}
 				go func() {
 					n := time.Now().UnixNano()
-					appFollower.WaitGo()
 					clientFunc()
 					t.Logf("clusterAppTemplate %f ms", float64(time.Now().UnixNano()-n)/10e6)
 					appLeader.Stop()
@@ -181,4 +184,116 @@ func clusterApp2Template(t *testing.T, clientFunc func()) {
 	appLeader.Start()
 	exitWait.Wait()
 	appLeader.PrintQPS()
+}
+
+type testGRpcClient struct {
+	c *app.GRpcClient
+}
+
+func (th *testGRpcClient) Get() *testClient {
+	return th.c.Get().(*testClient)
+}
+
+func newClient(addr string) *testGRpcClient {
+	c := app.NewGRpcClient(2000*time.Millisecond, NewTestClient)
+	if err := c.Connect(addr, ""); err != nil {
+		return nil
+	}
+	return &testGRpcClient{
+		c: c,
+	}
+}
+
+func newTestUnit() *TestUnit {
+	return &TestUnit{
+		A: "123",
+		B: 1,
+		C: 2,
+		D: "321",
+	}
+}
+
+func GRpcQuery(addr string, cmd string, key string, writeTimes int, hash bool, timeout time.Duration, printResult bool) bool {
+	addrs := strings.Split(addr, ",")
+	addr = addrs[rand.Intn(len(addrs))]
+	c := newClient(addr)
+	if c == nil {
+		return false
+	}
+	defer c.c.Close()
+	header := &Header{}
+	if hash {
+		header.Hash = key
+	}
+	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	switch cmd {
+	case "get":
+		rsp, e := c.Get().GetRequest(ctx, &GetReq{
+			Header: header,
+			A:      key,
+			B:      0,
+			C:      0,
+		})
+		if e != nil {
+			logrus.Errorf("get err ,%s,%s", key, e.Error())
+			return false
+		} else {
+			if printResult {
+				logrus.Infof("get %v", *rsp)
+			}
+		}
+	case "set":
+		A := make(map[string]*TestUnit, 0)
+		for i := 0; i < writeTimes; i++ {
+			A[fmt.Sprintf("%s_%d", key, i)] = newTestUnit()
+		}
+		rsp, e := c.Get().SetRequest(ctx, &SetReq{
+			Header: header,
+			A:      A,
+			Timeline: []*TimeLineUnit{&TimeLineUnit{
+				Tag:      "Send",
+				Timeline: time.Now().UnixNano() / 1e3,
+			}},
+		})
+		if e != nil {
+			logrus.Errorf("set err ,%s,%s", key, e.Error())
+			return false
+		} else {
+			if printResult {
+				logrus.Infof("set %v", *rsp)
+			}
+			if app.DebugTraceFutureLine {
+				rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
+					Tag:      "Result",
+					Timeline: time.Now().UnixNano() / 1e3,
+				})
+				var dif int64
+				timeline := make([]string, 0)
+				for i := len(rsp.TimeLine) - 1; i > 0; i-- {
+					from := rsp.TimeLine[i-1]
+					to := rsp.TimeLine[i]
+					dif += to.Timeline - from.Timeline
+					timeline = append(timeline, fmt.Sprintf("%s ==> %s %d", from.Tag, to.Tag, to.Timeline-from.Timeline))
+				}
+				if dif > 3000*1e3 {
+					logrus.Infof("Timeline(%d): %s", dif, strings.Join(timeline, " , "))
+				}
+			}
+		}
+	case "del":
+		rsp, e := c.Get().DelRequest(ctx, &DelReq{
+			Header: header,
+			A:      key,
+		})
+		if e != nil {
+			logrus.Errorf("del err ,%s,%s", key, e.Error())
+			return false
+		} else {
+			if printResult {
+				logrus.Infof("del %v", *rsp)
+			}
+		}
+	default:
+	}
+	return true
 }

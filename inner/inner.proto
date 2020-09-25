@@ -14,6 +14,7 @@ service Raft {
     rpc TransGrpcRequest(TransGrpcReq) returns (TransGrpcRsp){}
     rpc HealthRequest(HealthReq) returns (HealthRsp){}
     rpc RemoveMember(RemoveMemberReq) returns (RemoveMemberRsp){}
+    rpc ExitRequest(ExitReq) returns (ExitRsp){}
 }
 message JoinReq {
     Member info = 1;
@@ -21,6 +22,7 @@ message JoinReq {
 message JoinRsp {
     int32 result = 1;      //0 ok
     string message = 2;
+    Member info = 3;
 }
 message Member {
     string nodeId = 1;
@@ -33,6 +35,7 @@ message SynMemberReq {
     repeated Member mem = 1;
     bool bootstrap = 2;
     int32 bootstrapExpect = 3;
+    string nodeId = 4;
 }
 message SynMemberRsp {
     int32 result = 1;
@@ -49,9 +52,13 @@ message TransGrpcReq {
     string hash = 1;
     string name = 2;
     bytes data = 3;
+    bool prioritized = 4;
+    repeated TimeLineUnit timeline = 5;
 }
 message TransGrpcRsp {
     bytes data = 1;
+    repeated TimeLineUnit timeline = 2;
+    bool back = 3;
 }
 message HealthReq {
     Member info = 1;
@@ -91,4 +98,14 @@ message ApplyCmd{
         OpSet set = 3;
         OpDel del = 4;
     }
+}
+message TimeLineUnit{
+    string tag = 1;
+    int64 t = 2;
+}
+message ExitReq{
+    string node_id = 1;
+}
+message ExitRsp{
+    int32 result = 1;
 }
