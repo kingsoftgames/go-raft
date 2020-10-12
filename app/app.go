@@ -15,8 +15,6 @@ import (
 	"sync/atomic"
 	"time"
 
-	healthgrpc "google.golang.org/grpc/health/grpc_health_v1"
-
 	"github.com/hashicorp/raft"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -274,35 +272,6 @@ func (th *MainApp) Init(configPath string) int {
 	th.watchJoinFile()
 	th.Work()
 	logrus.Infof("[%s]Init finished[%d]", th.config.NodeId, os.Getpid())
-	common.NewTicker(2*time.Second, func() {
-		ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-		{
-			con, err := grpc.DialContext(ctx, th.config.InnerAddr, grpc.WithBlock(), grpc.WithInsecure())
-			if err != nil {
-				logrus.Errorf("Test_Health inner Failed,%s", err.Error())
-			}
-			c := healthgrpc.NewHealthClient(con)
-			r, e := c.Check(ctx, &healthgrpc.HealthCheckRequest{Service: ""})
-			if e != nil {
-				logrus.Errorf("Test_Health grpc inner err, %s", e.Error())
-				return
-			}
-			logrus.Infof("Test_Health grpc inner status,%v", r.Status)
-		}
-		{
-			con, err := grpc.DialContext(ctx, th.config.GrpcApiAddr, grpc.WithBlock(), grpc.WithInsecure())
-			if err != nil {
-				logrus.Errorf("Test_Health api Failed,%s", err.Error())
-			}
-			c := healthgrpc.NewHealthClient(con)
-			r, e := c.Check(ctx, &healthgrpc.HealthCheckRequest{Service: ""})
-			if e != nil {
-				logrus.Errorf("Test_Health grpc api err, %s", e.Error())
-				return
-			}
-			logrus.Infof("Test_Health grpc api status,%v", r.Status)
-		}
-	})
 	return 0
 }
 func (th *MainApp) release() {

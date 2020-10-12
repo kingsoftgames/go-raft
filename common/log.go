@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"google.golang.org/grpc/grpclog"
+
 	"github.com/gin-gonic/gin"
 
 	"github.com/orandin/lumberjackrus"
@@ -115,6 +117,7 @@ func InitLog(config *LogConfigure) {
 		logrus.SetFormatter(newTextFormat(true))
 		addFileHook(config)
 	})
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(os.Stdout, os.Stderr, os.Stderr))
 }
 
 func addFileHook(config *LogConfigure) error {

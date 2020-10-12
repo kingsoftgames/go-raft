@@ -27,6 +27,7 @@ job "test" {
       }
       kill_timeout = "30s"
       resources {
+        memory = 2000
         network {
           mbits = 10
           port "raft" {}

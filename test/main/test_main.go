@@ -25,12 +25,16 @@ var hash *bool
 var cmd *string
 var cntUnit *int
 var key *string
+var debug *bool
 
 func main() {
 	flag.Parse()
 	if *cli {
 		client()
 	} else {
+		if *debug {
+			app.DebugTraceFutureLine = true
+		}
 		app.RunMain()
 	}
 }
@@ -45,6 +49,7 @@ func init() {
 	hash = flag.Bool("hash", true, "whether use hash when query")
 	cmd = flag.String("cmd", "set", "cmd for query,can multi cmd split by ','")
 	key = flag.String("key", "", "key for get','")
+	debug = flag.Bool("debug", false, "whether debug for test")
 }
 func client() {
 	logrus.SetFormatter(&logrus.JSONFormatter{TimestampFormat: time.RFC3339Nano})
