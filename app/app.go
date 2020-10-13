@@ -1190,7 +1190,6 @@ func (th *MainApp) sigGo() {
 }
 func (th *MainApp) runGRpcRequest() {
 	logrus.Infof("[%s]runGRpcRequest,%d", th.config.NodeId, common.GoID())
-	t := time.Now().UnixNano()
 	defer func() {
 		if err := recover(); err != nil {
 			var buf [4096]byte
@@ -1226,31 +1225,13 @@ func (th *MainApp) runGRpcRequest() {
 				realStop <- struct{}{}
 			})
 		}
-		t = time.Now().UnixNano()
-		var lastF *ReplyFuture
 		switch th.store.GetRaft().State() {
 		case raft.Leader:
-			if dif := time.Now().UnixNano() - t; dif > 1e9 {
-				logrus.Errorf("[%s]raft.Leader1[%v]", th.config.NodeId, dif)
-			}
-			t = time.Now().UnixNano()
 			select {
 			case f := <-th.grpcPrioritizedChan:
-				lastF = f
-				if dif := time.Now().UnixNano() - t; dif > 1e9 {
-					logrus.Errorf("[%s]raft.Leader2[%v][%v]%v", th.config.NodeId, dif, lastF.req, lastF.GetTimeLineDif())
-				}
-				t = time.Now().UnixNano()
 				th.leaderGRpc(f)
-				lastF = f
 			case f := <-th.grpcChan:
-				lastF = f
-				if dif := time.Now().UnixNano() - t; dif > 1e9 {
-					logrus.Errorf("[%s]raft.Leader3[%v][%v]%v", th.config.NodeId, dif, lastF.req, lastF.GetTimeLineDif())
-				}
-				t = time.Now().UnixNano()
 				th.leaderGRpc(f)
-				lastF = f
 			case <-th.stopChan:
 				stopFunc()
 			case <-realStop:
@@ -1259,35 +1240,15 @@ func (th *MainApp) runGRpcRequest() {
 			case <-th.sig:
 				break
 			}
-			if dif := time.Now().UnixNano() - t; dif > 1e9 {
-				logrus.Errorf("[%s]raft.Leader4[%v]", th.config.NodeId, dif)
-			}
-			t = time.Now().UnixNano()
 		case raft.Follower:
-			if dif := time.Now().UnixNano() - t; dif > 1e9 {
-				logrus.Errorf("[%s]raft.Follower1[%v]", th.config.NodeId, dif)
-			}
-			t = time.Now().UnixNano()
-			var t1 int64
+
 			//TODO 会存在持续占有cpu问题
 			if con := th.inner.GetInner(); con != nil {
 				select {
 				case f := <-th.grpcPrioritizedChan:
-					lastF = f
-					if dif := time.Now().UnixNano() - t; dif > 1e9 {
-						logrus.Errorf("[%s]raft.Follower2[%v]", th.config.NodeId, dif)
-					}
 					th.followerGRpc(f, con)
-					lastF = f
-					t1 = time.Now().UnixNano()
 				case f := <-th.grpcChan:
-					lastF = f
-					if dif := time.Now().UnixNano() - t; dif > 1e9 {
-						logrus.Errorf("[%s]raft.Follower3[%v]", th.config.NodeId, dif)
-					}
 					th.followerGRpc(f, con)
-					lastF = f
-					t1 = time.Now().UnixNano()
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
@@ -1308,10 +1269,6 @@ func (th *MainApp) runGRpcRequest() {
 					break
 				}
 			}
-			if dif := time.Now().UnixNano() - t; dif > 1e9 {
-				logrus.Errorf("[%s]raft.Follower4[%v][%v][%v]", th.config.NodeId, dif, t1-t, time.Now().UnixNano()-t1)
-			}
-			t = time.Now().UnixNano()
 		case raft.Candidate:
 			select {
 			case <-th.stopChan:
