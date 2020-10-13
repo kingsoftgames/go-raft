@@ -30,15 +30,6 @@ func (th *RaftServerGRpc) JoinRequest(ctx context.Context, req *inner.JoinReq) (
 	if f.Error() != nil {
 		return nil, f.Error()
 	}
-	return f.Response().(*inner.JoinRsp), nil
-
-	//rsp := &inner.JoinRsp{}
-	//if err := th.App.Join(req.Info); err != nil {
-	//	rsp.Result = -1
-	//	rsp.Message = err.Error()
-	//	return rsp, err
-	//}
-	//return rsp, nil
 }
 func (th *RaftServerGRpc) SynMember(ctx context.Context, req *inner.SynMemberReq) (*inner.SynMemberRsp, error) {
 	logrus.Infof("[API][%s]SynMember,%s,%v", th.App.config.NodeId, req.NodeId, req.Mem)
@@ -50,27 +41,6 @@ func (th *RaftServerGRpc) SynMember(ctx context.Context, req *inner.SynMemberReq
 		return nil, f.Error()
 	}
 	return f.Response().(*inner.SynMemberRsp), nil
-	//
-	//rsp := &inner.SynMemberRsp{}
-	//th.App.config.Bootstrap = req.Bootstrap
-	//th.App.config.BootstrapExpect = int(req.BootstrapExpect)
-	//for _, m := range req.Mem {
-	//	mem := th.App.members.Get(m.NodeId)
-	//	if mem != nil {
-	//		continue
-	//	}
-	//	if err := th.App.members.Add(&Member{
-	//		NodeId:    m.NodeId,
-	//		RaftAddr:  m.RaftAddr,
-	//		InnerAddr: m.InnerAddr,
-	//		Ver:       m.Ver,
-	//		LastIndex: m.LastIndex,
-	//	}); err != nil {
-	//		logrus.Errorf("[API]SynMember,Add,error,%s,%s", m.NodeId, err.Error())
-	//	}
-	//	th.App.updateLatestVersion(m.Ver)
-	//}
-	//return rsp, nil
 }
 func (th *RaftServerGRpc) TransHttpRequest(ctx context.Context, req *inner.TransHttpReq) (*inner.TransHttpRsp, error) {
 	rsp := &inner.TransHttpRsp{}
@@ -97,6 +67,8 @@ func (th *RaftServerGRpc) TransGrpcRequest(ctx context.Context, req *inner.Trans
 	if err = common.Decode(req.Data, _req.Interface()); err != nil {
 		return
 	}
+	logrus.Debugf("TransGrpcRequest %v", _req)
+	defer logrus.Debugf("TransGrpcRequest rsp %v", _req)
 	_rsp := reflect.New(hd.paramRsp)
 	f := NewReplyFuture(context.WithValue(ctx, "hash", req.Hash), _req.Interface(), _rsp.Interface())
 	f.prioritized = req.Prioritized
@@ -151,15 +123,6 @@ func (th *RaftServerGRpc) RemoveMember(ctx context.Context, req *inner.RemoveMem
 		return nil, f.Error()
 	}
 	return f.Response().(*inner.RemoveMemberRsp), nil
-
-	//rsp := &inner.RemoveMemberRsp{
-	//	NodeId: req.NodeId,
-	//}
-	//if err := th.App.RemoveMember(req.NodeId); err != nil {
-	//	rsp.Result = -1
-	//	return rsp, err
-	//}
-	//return rsp, nil
 }
 func (th *RaftServerGRpc) ExitRequest(ctx context.Context, req *inner.ExitReq) (*inner.ExitRsp, error) {
 	logrus.Infof("[API][%s]ExitRequest,%s", th.App.config.NodeId, req.NodeId)
