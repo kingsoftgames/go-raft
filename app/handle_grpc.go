@@ -30,6 +30,7 @@ func (th *RaftServerGRpc) JoinRequest(ctx context.Context, req *inner.JoinReq) (
 	if f.Error() != nil {
 		return nil, f.Error()
 	}
+	return f.Response().(*inner.JoinRsp), nil
 }
 func (th *RaftServerGRpc) SynMember(ctx context.Context, req *inner.SynMemberReq) (*inner.SynMemberRsp, error) {
 	logrus.Infof("[API][%s]SynMember,%s,%v", th.App.config.NodeId, req.NodeId, req.Mem)
