@@ -1,8 +1,11 @@
 package app
 
 import (
-	"container/list"
 	"sync"
+	"sync/atomic"
+	"time"
+
+	"github.com/sirupsen/logrus"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
 
@@ -10,24 +13,28 @@ import (
 )
 
 const (
-	poolMaxConnect = 3
+	poolMaxConnect = 10
 )
 
 type InnerCon struct {
-	idx        int
+	curNum     int32
+	allocNum   int32
 	maxClient  int
-	conTimeout int
+	conTimeout time.Duration
 	addr       string
-	clients    *list.List
+	clients    chan *innerGRpcClient
 	l          sync.Mutex
+	tag        string
+	closeLock  sync.Mutex
 }
 
-func NewInnerCon(addr string, maxClient, conTimeout int) *InnerCon {
+func NewInnerCon(addr string, maxClient int, conTimeout time.Duration, tag string) *InnerCon {
 	return &InnerCon{
 		addr:       addr,
 		maxClient:  maxClient,
 		conTimeout: conTimeout,
-		clients:    list.New(),
+		clients:    make(chan *innerGRpcClient, maxClient),
+		tag:        tag,
 	}
 }
 func (th *InnerCon) GetRaftClient(cb func(client inner.RaftClient)) {
@@ -40,41 +47,63 @@ func (th *InnerCon) GetRaftClient(cb func(client inner.RaftClient)) {
 	}
 }
 func (th *InnerCon) Get() *innerGRpcClient {
-	common.Debugf("[%s]Get", th.addr)
-	th.l.Lock()
-	front := th.clients.Front()
-	if front != nil {
-		th.clients.Remove(front)
-		th.l.Unlock()
-		return front.Value.(*innerGRpcClient)
-	}
-	th.l.Unlock()
-	c := NewInnerGRpcClient(th.conTimeout)
-	if err := c.Connect(th.addr); err != nil {
+	th.closeLock.Lock()
+	defer th.closeLock.Unlock()
+	if th.clients == nil {
 		return nil
 	}
-	c.Idx = th.idx
-	th.idx++
-	common.Debugf("[%s]Get,New,%d", th.addr, c.Idx)
-	return c
+	//f := common.GetFrame(2)
+	//common.Debugf("[%s]Get %s:%d", th.tag, f.File, f.Line)
+	common.Debugf("[%s]Get,%s", th.tag, th.addr)
+	defer atomic.AddInt32(&th.curNum, 1)
+	if len(th.clients) == 0 && int(th.allocNum) < th.maxClient {
+		if idx := int(atomic.AddInt32(&th.allocNum, 1)); idx <= th.maxClient {
+			common.Debugf("[%s]Get,New,%s,%d", th.tag, th.addr, idx)
+			c := NewInnerGRpcClient(th.conTimeout)
+			if err := c.Connect(th.addr, th.tag); err == nil {
+				c.Idx = idx
+				th.clients <- c
+			}
+		} else {
+			atomic.AddInt32(&th.allocNum, -1)
+		}
+	}
+	return <-th.clients
 }
 func (th *InnerCon) BackTo(c *innerGRpcClient) {
 	if c == nil {
 		return
 	}
-	common.Debugf("[%s]BackTo,%d", th.addr, c.Idx)
-	th.l.Lock()
-	defer th.l.Unlock()
-	if th.clients.Len() < th.maxClient {
-		th.clients.PushFront(c)
+	th.closeLock.Lock()
+	defer th.closeLock.Unlock()
+	if th.clients == nil {
+		c.Close()
+		atomic.AddInt32(&th.allocNum, -1)
 		return
 	}
-	c.Close()
+	atomic.AddInt32(&th.allocNum, -1)
+	defer atomic.AddInt32(&th.curNum, -1)
+	common.Debugf("[%s]BackTo,%s,%d", th.tag, th.addr, c.Idx)
+	//defer logrus.Debugf("[%s]BackTo end,%s,%d", th.tag, th.addr, c.Idx)
+	th.clients <- c
 }
 func (th *InnerCon) Close() {
-	th.l.Lock()
-	defer th.l.Unlock()
-	for f := th.clients.Front(); f != nil; f = th.clients.Front() {
-		f.Value.(*innerGRpcClient).Close()
+	logrus.Infof("[%s]Close,%s", th.tag, th.addr)
+	defer logrus.Infof("[%s]Close finished,%s", th.tag, th.addr)
+	th.closeLock.Lock()
+	defer func() {
+		close(th.clients)
+		th.clients = nil
+		th.closeLock.Unlock()
+	}()
+	//分配的全部释放
+	for {
+		select {
+		case c := <-th.clients:
+			c.Close()
+			atomic.AddInt32(&th.allocNum, -1)
+		default:
+			return
+		}
 	}
 }

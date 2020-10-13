@@ -59,7 +59,8 @@ func (th *RealMain) run() {
 		signal.Notify(s, os.Kill, os.Interrupt)
 		go func(mainApp *MainApp) {
 			select {
-			case <-s:
+			case _s := <-s:
+				logrus.Infof("recv %s", _s.String())
 				mainApp.Stop()
 			}
 		}(mainApp)
@@ -68,6 +69,9 @@ func (th *RealMain) run() {
 	exitWait.Wait()
 }
 func RunMain() {
+	defer func() {
+		logrus.Info("RunMain exit")
+	}()
 	realMain.run()
 }
 func init() {

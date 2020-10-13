@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"runtime"
 	"runtime/debug"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -22,7 +23,8 @@ func GetHandleFunctionName(message protoreflect.ProtoMessage) string {
 }
 
 type CheckWork struct {
-	s atomic.Value
+	s    atomic.Value
+	Name string
 }
 
 func (th *CheckWork) Check() bool {
@@ -33,23 +35,46 @@ func (th *CheckWork) Check() bool {
 }
 func (th *CheckWork) Work() {
 	if !th.Check() {
-		logrus.Infof("Work")
+		logrus.Infof("[%s]Work", th.Name)
 		th.s.Store(true)
 	}
 }
 func (th *CheckWork) Idle() {
 	if th.Check() {
-		logrus.Infof("Idle")
+		logrus.Infof("[%s]Idle", th.Name)
 		th.s.Store(false)
 	}
 }
 func GetStack(depth int) string {
+	if !isDebug() {
+		return "call OpenDebugGracefulExit()"
+	}
 	stack := string(debug.Stack())
 	ss := strings.Split(stack, "\n")
 	if len(ss) > depth+2 {
 		stack = strings.Join(ss[depth:depth+2], "\n")
 	}
 	return stack
+}
+func GetFrame(skipFrames int) runtime.Frame {
+	// We need the frame at index skipFrames+2, since we never want runtime.Callers and getFrame
+	targetFrameIndex := skipFrames + 2
+
+	// Set size to targetFrameIndex+2 to ensure we have room for one more caller than we need
+	programCounters := make([]uintptr, targetFrameIndex+2)
+	n := runtime.Callers(0, programCounters)
+	frame := runtime.Frame{Function: "unknown"}
+	if n > 0 {
+		frames := runtime.CallersFrames(programCounters[:n])
+		for more, frameIndex := true, 0; more && frameIndex <= targetFrameIndex; frameIndex++ {
+			var frameCandidate runtime.Frame
+			frameCandidate, more = frames.Next()
+			if frameIndex == targetFrameIndex {
+				frame = frameCandidate
+			}
+		}
+	}
+	return frame
 }
 
 type GracefulExit struct {
@@ -187,4 +212,15 @@ func (th *GracefulGoFunc) Done() {
 func (th *GracefulGoFunc) Wait() {
 	th.stopGo.Store(true)
 	th.exitWait.Wait()
+}
+
+func GoID() int {
+	var buf [64]byte
+	n := runtime.Stack(buf[:], false)
+	idField := strings.Fields(strings.TrimPrefix(string(buf[:n]), "goroutine "))[0]
+	id, err := strconv.Atoi(idField)
+	if err != nil {
+		panic(fmt.Sprintf("cannot get goroutine id: %v", err))
+	}
+	return id
 }

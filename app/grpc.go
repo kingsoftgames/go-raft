@@ -6,6 +6,7 @@ import (
 	"net"
 	"reflect"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"google.golang.org/grpc/health"
@@ -18,8 +19,6 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/store"
-	"github.com/hashicorp/raft"
-
 	"google.golang.org/grpc"
 )
 
@@ -29,32 +28,34 @@ type GRpcClient struct {
 	newClient  interface{}
 	con        *grpc.ClientConn
 	addr       string
-	conTimeout int
+	conTimeout time.Duration
 }
 
-func NewGRpcClient(conTimeout int, newClient interface{}) *GRpcClient {
+func NewGRpcClient(conTimeout time.Duration, newClient interface{}) *GRpcClient {
 	return &GRpcClient{
 		conTimeout: conTimeout,
 		newClient:  newClient,
 	}
 }
 
-func (th *GRpcClient) Connect(addr string) error {
+func (th *GRpcClient) Connect(addr, tag string) error {
 	th.l.Lock()
 	defer th.l.Unlock()
 	if th.client != nil {
 		return fmt.Errorf("already connect")
 	}
-	ctx, _ := context.WithTimeout(context.Background(), time.Duration(th.conTimeout)*time.Millisecond)
+	ctx, _ := context.WithTimeout(context.Background(), th.conTimeout)
 	con, err := grpc.DialContext(ctx, addr, grpc.WithBlock(), grpc.WithInsecure())
 	if err != nil {
-		logrus.Errorf("[GrpcClient]Connect Failed,%s,%s", addr, err.Error())
+		logrus.Errorf("[%s][GrpcClient]Connect Failed,%s,%s", tag, addr, err.Error())
 		return err
 	}
 	th.client = reflect.ValueOf(th.newClient).Call([]reflect.Value{reflect.ValueOf(con)})[0].Interface()
 	th.con = con
 	th.addr = addr
-	logrus.Infof("[GrpcClient]Connect Succeed,%s", addr)
+	if len(tag) > 0 {
+		logrus.Infof("[%s][GrpcClient]Connect Succeed,%s", tag, addr)
+	}
 	return nil
 }
 func (th *GRpcClient) Close() {
@@ -69,7 +70,7 @@ func (th *GRpcClient) Close() {
 func (th *GRpcClient) ReConnect(addr string) error {
 	logrus.Infof("[GrpcClient]ReConnect %s, %s", th.addr, addr)
 	th.Close()
-	return th.Connect(addr)
+	return th.Connect(addr, "")
 }
 func (th *GRpcClient) Get() interface{} {
 	th.l.Lock()
@@ -82,7 +83,7 @@ type innerGRpcClient struct {
 	Idx int
 }
 
-func NewInnerGRpcClient(conTimeout int) *innerGRpcClient {
+func NewInnerGRpcClient(conTimeout time.Duration) *innerGRpcClient {
 	c := &innerGRpcClient{}
 	c.conTimeout = conTimeout
 	c.newClient = inner.NewRaftClient
@@ -92,14 +93,15 @@ func (th *innerGRpcClient) GetClient() inner.RaftClient {
 	return th.Get().(inner.RaftClient)
 }
 
-type Service struct {
-	l         sync.RWMutex
-	addr      string
-	ln        net.Listener
-	server    *grpc.Server
-	store     *store.RaftStore
-	client    *InnerCon
-	logicChan chan *ReplyFuture
+type GRpcService struct {
+	tag        string
+	addr       string
+	ln         net.Listener
+	server     *grpc.Server
+	store      *store.RaftStore
+	client     atomic.Value
+	lastClient atomic.Value
+	logicChan  chan *ReplyFuture
 
 	mainApp *MainApp
 
@@ -109,8 +111,9 @@ type Service struct {
 	handle map[string]reflect.Value
 }
 
-func New(addr string, conTimeout int, store *store.RaftStore, mainApp *MainApp) *Service {
-	return &Service{
+func New(addr string, store *store.RaftStore, mainApp *MainApp, tag string) *GRpcService {
+	return &GRpcService{
+		tag:       tag,
 		addr:      addr,
 		store:     store,
 		logicChan: make(chan *ReplyFuture, 2048),
@@ -120,68 +123,69 @@ func New(addr string, conTimeout int, store *store.RaftStore, mainApp *MainApp) 
 		mainApp:   mainApp,
 	}
 }
-func (th *Service) Start() error {
+func (th *GRpcService) Start() error {
 	ln, err := net.Listen("tcp", th.addr)
 	if err != nil {
 		return err
 	}
 	th.ln = ln
 	th.goFunc.Go(func() {
-		logrus.Infof("grpc server %s start", th.addr)
+		logrus.Infof("[%s.%s]grpc server %s start", th.mainApp.config.NodeId, th.tag, th.addr)
 		if err := th.server.Serve(th.ln); err != nil {
-			logrus.Fatalf("Start failed %s", err.Error())
+			logrus.Fatalf("[%s.%s]Start failed %s", th.mainApp.config.NodeId, th.tag, err.Error())
 		}
-		logrus.Infof("grpc server %s closed", th.addr)
+		logrus.Infof("[%s.%s]grpc server %s closed", th.mainApp.config.NodeId, th.tag, th.addr)
 	})
 
 	//register health
 	th.health = health.NewServer()
-	//th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
 	healthgrpc.RegisterHealthServer(th.GetGrpcServer(), th.health)
-
-	th.store.OnStateChg.Add(func(i interface{}) {
-		switch i.(raft.RaftState) {
-		case raft.Leader, raft.Follower:
-			th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
-		default:
-			th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
-		}
-	})
-	th.store.OnLeaderChg.Add(func(i interface{}) {
-		if len(i.(string)) == 0 {
-			return
-		}
-		if m := th.mainApp.members.GetByRaftAddr(i.(string)); m != nil {
-			logrus.Debugf("Leader Chg %s", i.(string))
-			th.l.Lock()
-			th.client = m.Con
-			th.l.Unlock()
-			if th.client != nil {
-				th.mainApp.Work()
-			} else {
-				logrus.Debugf("[%s]leader not connect Work(%v) ", th.mainApp.config.NodeId, th.mainApp.Check())
-			}
-		}
-
-	})
 	return nil
 }
-func (th *Service) GetGrpcServer() *grpc.Server {
+func (th *GRpcService) UpdateClient(client *InnerCon) {
+	if l := th.client.Load(); l != nil {
+		th.lastClient.Store(l)
+	}
+	th.client.Store(client)
+	if client != nil {
+		logrus.Debugf("[%s.%s]UpdateClient,%s", th.mainApp.config.NodeId, th.tag, client.addr)
+	} else {
+		logrus.Debugf("[%s.%s]UpdateClient,%s", th.mainApp.config.NodeId, th.tag, "")
+	}
+}
+func (th *GRpcService) SetHealth(health bool) {
+	logrus.Infof("[%s.%s]SetHealth,%v", th.mainApp.config.NodeId, th.tag, health)
+	if health {
+		th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
+	} else {
+		th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_NOT_SERVING)
+	}
+}
+func (th *GRpcService) GetGrpcServer() *grpc.Server {
 	return th.server
 }
-func (th *Service) Stop() {
+func (th *GRpcService) Stop() {
+	logrus.Infof("[%s.%s]GRpcService.Stop,%s", th.mainApp.config.NodeId, th.tag, th.addr)
+	defer logrus.Infof("[%s.%s]GRpcService.Stop finished,%s", th.mainApp.config.NodeId, th.tag, th.addr)
 	th.server.GracefulStop()
 	th.health.Shutdown()
 }
-func (th *Service) IsLeader() bool {
-	return th.store.IsLeader()
-}
-func (th *Service) IsFollower() bool {
-	return th.store.IsFollower()
-}
 
-func (th *Service) GetInner() *InnerCon {
-	th.l.RLock()
-	defer th.l.RUnlock()
-	return th.client
+func (th *GRpcService) GetInner() *InnerCon {
+	t := time.Now().UnixNano()
+	defer func() {
+		if dif := time.Now().UnixNano() - t; dif > 1e9 {
+			logrus.Errorf("[%s]GetInner[%v]", th.mainApp.config.NodeId, dif)
+		}
+	}()
+	if c := th.client.Load(); c != nil {
+		return c.(*InnerCon)
+	}
+	return nil
+}
+func (th *GRpcService) GetLastInner() *InnerCon {
+	if c := th.lastClient.Load(); c != nil {
+		return c.(*InnerCon)
+	}
+	return nil
 }

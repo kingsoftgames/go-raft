@@ -41,7 +41,7 @@ func NewLogStoreCache(capacity int, path string) (*LogStoreCache, error) {
 	if capacity <= 0 {
 		return nil, fmt.Errorf("capacity must be positive")
 	}
-	if err := os.MkdirAll(path, 0755); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(path, os.ModePerm); err != nil && !os.IsExist(err) {
 		return nil, fmt.Errorf("logStoreCache path not accessible: %v", err)
 	}
 	btDB, err := raftboltdb.NewBoltStore(filepath.Join(path, "log.db"))
@@ -71,6 +71,9 @@ func (th *LogStoreCache) GetLog(idx uint64, log *raft.Log) error {
 	defer th.l.RUnlock()
 	common.Debugf("[%s]GetLog,curIdx:%d,lowIdx:%d,highIdx:%d,firstIdx:%d,lastIdx:%d,%d", th.name, th.curIdx, th.lowIndex, th.highIndex, th.firstIndex, th.lastIndex, idx)
 	if idx >= th.lowIndex && idx <= th.highIndex {
+		if idx-th.lowIndex >= uint64(th.capacity) {
+			logrus.Errorf("[%s]GetLog,curIdx:%d,lowIdx:%d,highIdx:%d,firstIdx:%d,lastIdx:%d,%d", th.name, th.curIdx, th.lowIndex, th.highIndex, th.firstIndex, th.lastIndex, idx)
+		}
 		cached := th.cache[idx-th.lowIndex]
 		if cached != nil && cached.Index == idx {
 			*log = *cached

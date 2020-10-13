@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"reflect"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/sirupsen/logrus"
 
@@ -23,26 +25,44 @@ type Handler struct {
 	h map[string]*HandlerValue
 }
 
-type FutureSlice []raft.ApplyFuture
+type FutureSlice struct {
+	f []raft.ApplyFuture
+	t int64
+}
 
+var cnt, totalTime int64
+
+func GetFutureAve() string {
+	return fmt.Sprintf("FutureAve cnt %d, totalTime %dmics,ave %vmics", cnt, totalTime, totalTime/cnt)
+}
+
+//TODO only support one this version
 func (th *FutureSlice) Add(f raft.ApplyFuture) {
-	if *th == nil {
-		*th = make([]raft.ApplyFuture, 0)
+	if th.f == nil {
+		th.f = make([]raft.ApplyFuture, 0)
 	}
-	*th = append(*th, f)
+	if len(th.f) >= 1 {
+		panic("only support one future")
+	}
+	th.f = append(th.f, f)
+	th.t = time.Now().UnixNano() / 1e3
 }
 func (th *FutureSlice) foreach(cb func(int, raft.ApplyFuture)) {
-	for i, f := range *th {
+	for i, f := range th.f {
 		cb(i, f)
 	}
 }
 func (th *FutureSlice) Len() int {
-	return len(*th)
+	return len(th.f)
 }
 
 func (th *FutureSlice) Error() error {
+	defer func() {
+		atomic.AddInt64(&cnt, 1)
+		atomic.AddInt64(&totalTime, time.Now().UnixNano()/1e3-th.t)
+	}()
 	if th.Len() == 1 {
-		return (*th)[0].Error()
+		return th.f[0].Error()
 	} else if th.Len() > 1 {
 		var err FutureSliceError = make(FutureSliceError, th.Len())
 		var w sync.WaitGroup
@@ -56,9 +76,13 @@ func (th *FutureSlice) Error() error {
 			}()
 		})
 		w.Wait()
+
 		return err.Error()
 	}
 	return nil
+}
+func (th *FutureSlice) Clear() {
+	th.f = nil
 }
 
 type FutureSliceError []error
@@ -91,6 +115,11 @@ func (th FutureSliceError) Error() error {
 type HandlerRtv struct {
 	Err     error
 	Futures FutureSlice
+}
+
+func (th *HandlerRtv) Clear() {
+	th.Err = nil
+	th.Futures.Clear()
 }
 
 func (th *Handler) Register(impl interface{}) {

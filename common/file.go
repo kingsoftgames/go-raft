@@ -67,5 +67,6 @@ func (th *FileWatch) Start() {
 func (th *FileWatch) Stop() {
 	if th.ticker != nil {
 		th.ticker.Stop()
+		th.ticker = nil
 	}
 }

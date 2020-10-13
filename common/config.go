@@ -31,41 +31,49 @@ func NewDefaultLogConfigure() *LogConfigure {
 }
 
 type Configure struct {
-	RaftAddr         string        `yaml:"raft_addr"`
-	GrpcApiAddr      string        `yaml:"grpc_addr"`
-	HttpApiAddr      string        `yaml:"http_addr"`
-	StoreInMem       bool          `yaml:"store_in_mem"`       //是否落地，false落地，true不落地
-	StoreDir         string        `yaml:"store_dir"`          //如果StoreInMem为true，这个参数无效
-	LogCacheCapacity int           `yaml:"log_cache_capacity"` //如果大于0，那么logStore使用 LogStoreCache
-	Codec            string        `yaml:"codec"`
-	LogConfig        *LogConfigure `yaml:"log_config"`
-	PortShift        int           `yaml:"port_shift"`
-	NodeId           string        `yaml:"node_id"`
-	JoinAddr         string        `yaml:"join_addr"`
-	TryJoinTime      int           `yaml:"try_join_time"`
-	JoinFile         string        `yaml:"join_file"`
-	ConnectTimeoutMs int           `yaml:"connect_timeout_ms"` //连接超时（毫秒）
-	Bootstrap        bool          `yaml:"bootstrap"`
-	BootstrapExpect  int           `yaml:"bootstrap_expect"`
+	RaftAddr              string        `yaml:"raft_addr"`
+	GrpcApiAddr           string        `yaml:"grpc_addr"`
+	HttpApiAddr           string        `yaml:"http_addr"`
+	InnerAddr             string        `yaml:"inner_addr"`
+	StoreInMem            bool          `yaml:"store_in_mem"`       //是否落地，false落地，true不落地
+	StoreDir              string        `yaml:"store_dir"`          //如果StoreInMem为true，这个参数无效
+	LogCacheCapacity      int           `yaml:"log_cache_capacity"` //如果大于0，那么logStore使用 LogStoreCache
+	Codec                 string        `yaml:"codec"`
+	LogConfig             *LogConfigure `yaml:"log_config"`
+	PortShift             int           `yaml:"port_shift"`
+	NodeId                string        `yaml:"node_id"`
+	JoinAddr              string        `yaml:"join_addr"`
+	TryJoinTime           int           `yaml:"try_join_time"`
+	JoinFile              string        `yaml:"join_file"`
+	ConnectTimeoutMs      int           `yaml:"connect_timeout_ms"` //连接超时（毫秒）
+	Bootstrap             bool          `yaml:"bootstrap"`
+	BootstrapExpect       int           `yaml:"bootstrap_expect"`
+	Ver                   string        `yaml:"ver"`
+	HealthCheckIntervalMs int           `yaml:"health_check_interval_ms"`
+	CleanDeadServers      bool          `yaml:"cleanup_dead_servers"`
 }
 
 func NewDefaultConfigure() *Configure {
 	config := &Configure{
-		RaftAddr:         "127.0.0.1:18300",
-		GrpcApiAddr:      "127.0.0.1:18310",
-		HttpApiAddr:      "127.0.0.1:18320",
-		StoreDir:         "./",
-		StoreInMem:       true,
-		Codec:            "msgpack",
-		LogConfig:        NewDefaultLogConfigure(),
-		PortShift:        0,
-		NodeId:           "",
-		JoinAddr:         "",
-		JoinFile:         "",
-		TryJoinTime:      3,
-		ConnectTimeoutMs: 100,
-		Bootstrap:        true,
-		BootstrapExpect:  0,
+		RaftAddr:              "127.0.0.1:18300",
+		GrpcApiAddr:           "127.0.0.1:18310",
+		HttpApiAddr:           "127.0.0.1:18320",
+		InnerAddr:             "127.0.0.1:18330",
+		StoreDir:              "./",
+		StoreInMem:            true,
+		Codec:                 "msgpack",
+		LogConfig:             NewDefaultLogConfigure(),
+		PortShift:             0,
+		NodeId:                "n",
+		JoinAddr:              "",
+		JoinFile:              "",
+		TryJoinTime:           3,
+		ConnectTimeoutMs:      100,
+		Bootstrap:             true,
+		BootstrapExpect:       0,
+		Ver:                   "v1.0",
+		HealthCheckIntervalMs: 200,
+		CleanDeadServers:      true,
 	}
 	trim(config)
 	return config
@@ -137,6 +145,7 @@ func InitConfigureFromFile(file string) *Configure {
 var raftAddr *string
 var gRpcApiAddr *string
 var httpApiAddr *string
+var innerAddr *string
 var storeDir *string
 var storeInMem *bool
 var codeC *string
@@ -149,9 +158,13 @@ var connectTimeoutMs *int
 var bootstrap *bool
 var bootstrapExpect *int
 var logCacheCapacity *int
+var healthCheckIntervalMs *int
+var cleanDeadServers *bool
 
 var crash *bool
 var crashNotify *string
+
+var ver *string
 
 func NeedCrash() bool {
 	return *crash
@@ -171,6 +184,8 @@ func trimConfigureFromFlag(config *Configure) {
 			config.GrpcApiAddr = *gRpcApiAddr
 		case "http_addr":
 			config.HttpApiAddr = *httpApiAddr
+		case "inner_addr":
+			config.InnerAddr = *innerAddr
 		case "store_dir":
 			config.StoreDir = *storeDir
 		case "store_mem":
@@ -195,6 +210,12 @@ func trimConfigureFromFlag(config *Configure) {
 			config.BootstrapExpect = *bootstrapExpect
 		case "log_cache_capacity":
 			config.LogCacheCapacity = *logCacheCapacity
+		case "ver":
+			config.Ver = *ver
+		case "cleanup_dead_servers":
+			config.CleanDeadServers = *cleanDeadServers
+		case "health_check_interval_ms":
+			config.HealthCheckIntervalMs = *healthCheckIntervalMs
 		}
 	})
 }
@@ -203,6 +224,7 @@ func init() {
 	raftAddr = flag.String("raft_addr", "", "addr for raft")
 	gRpcApiAddr = flag.String("grpc_addr", "", "addr for grpc")
 	httpApiAddr = flag.String("http_addr", "", "addr for http")
+	innerAddr = flag.String("inner_addr", "", "addr for inner grpc")
 	storeDir = flag.String("store_dir", "", "raft store directory")
 	storeInMem = flag.Bool("store_mem", true, "raft store in memory(default true)")
 	codeC = flag.String("codec", "", "codec json/msgpack")
@@ -217,4 +239,7 @@ func init() {
 	logCacheCapacity = flag.Int("log_cache_capacity", 0, "if >0 use LogStoreCache as logStore for raft")
 	crash = flag.Bool("crash", true, "if true ,process will exit when panic")
 	crashNotify = flag.String("crash_notify", "", "call sh/bat/exe when panic call like `crash_notify.sh crash.log`")
+	ver = flag.String("ver", "", "app version")
+	healthCheckIntervalMs = flag.Int("health_check_interval_ms", 200, "interval ms for health")
+	cleanDeadServers = flag.Bool("cleanup_dead_servers", true, "whether clean dead nodes when over health check time")
 }

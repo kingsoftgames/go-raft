@@ -20,7 +20,7 @@ func Test_tryJoin(t *testing.T) {
 
 func Test_JoinFile(t *testing.T) {
 	filename := "cache/join_addr.txt"
-	content := "127.0.0.1:18310\n127.0.0.1:18311"
+	content := "127.0.0.1:18330\n127.0.0.1:18331"
 	ioutil.WriteFile(filename, []byte(content), os.ModePerm)
 	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
 		configure.JoinFile = ""

@@ -30,7 +30,7 @@ func randStringSlice(ss []string) {
 func getJoinAddr(max int) string {
 	addrs := make([]string, 0)
 	for i := 0; i < max; i++ {
-		addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", 18310+i))
+		addrs = append(addrs, fmt.Sprintf("127.0.0.1:%d", 18330+i))
 	}
 	//随机打乱顺序
 	randStringSlice(addrs)
@@ -158,7 +158,7 @@ func clusterAppBootstrapExpectJoinFile(t *testing.T, nodeNum int, clientFunc fun
 			}
 			appNode[i].Start()
 
-			addrChan <- fmt.Sprintf("127.0.0.1:%d", 18310+i)
+			addrChan <- fmt.Sprintf("127.0.0.1:%d", 18330+i)
 		}(i)
 	}
 
@@ -170,7 +170,8 @@ func clusterAppBootstrapExpectJoinFile(t *testing.T, nodeNum int, clientFunc fun
 	}
 }
 func Test_bootstrapExpectJoinFile(t *testing.T) {
-	clusterAppBootstrapExpectJoinFile(t, 5, func() {
+	clusterAppBootstrapExpectJoinFile(t, 3, func() {
 		t.Logf("Test_bootstrapExpectJoinFile Ok")
+		time.Sleep(3 * time.Second)
 	})
 }

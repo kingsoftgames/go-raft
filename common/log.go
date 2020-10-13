@@ -8,6 +8,9 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
+
+	"google.golang.org/grpc/grpclog"
 
 	"github.com/gin-gonic/gin"
 
@@ -98,26 +101,27 @@ func newTextFormat(color bool) *textFormat {
 
 var once sync.Once
 
+func getLogLevel(level string) logrus.Level {
+	l, err := logrus.ParseLevel(level)
+	if err != nil {
+		l = logrus.InfoLevel
+	}
+	return l
+}
 func InitLog(config *LogConfigure) {
 	once.Do(func() {
-		gin.DefaultWriter = NewFileLog(config, "gin")
-		gin.DefaultErrorWriter = NewFileLog(config, "gin_err")
-		level, err := logrus.ParseLevel(config.Level)
-		if err != nil {
-			level = logrus.InfoLevel
-		}
-		logrus.SetLevel(level)
+		gin.DefaultWriter = NewFileLog(config, "", "gin")
+		gin.DefaultErrorWriter = NewFileLog(config, "", "gin_err")
+		logrus.SetLevel(getLogLevel(config.Level))
 		logrus.SetOutput(os.Stdout)
 		logrus.SetFormatter(newTextFormat(true))
 		addFileHook(config)
 	})
+	grpclog.SetLoggerV2(grpclog.NewLoggerV2(os.Stdout, os.Stderr, os.Stderr))
 }
 
 func addFileHook(config *LogConfigure) error {
-	level, err := logrus.ParseLevel(config.Level)
-	if err != nil {
-		level = logrus.InfoLevel
-	}
+	level := getLogLevel(config.Level)
 	hook, err := lumberjackrus.NewHook(
 		&lumberjackrus.LogFile{
 			Filename:  fmt.Sprintf("%s/info.log", config.Path),
@@ -127,7 +131,9 @@ func addFileHook(config *LogConfigure) error {
 			LocalTime: false,
 		},
 		level,
-		&logrus.JSONFormatter{},
+		&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339Nano,
+		},
 		&lumberjackrus.LogFileOpts{
 			logrus.ErrorLevel: &lumberjackrus.LogFile{
 				Filename:  fmt.Sprintf("%s/error.log", config.Path),
@@ -171,15 +177,22 @@ func (th *StdErrHook) Fire(entry *logrus.Entry) error {
 
 type LogFileWrite struct {
 	logger *logrus.Logger
+	tag    string
 }
 
 func (th *LogFileWrite) Write(p []byte) (n int, err error) {
-	th.logger.Info(string(p))
+	if len(th.tag) > 0 {
+		th.logger.WithField("logger", th.tag).Infof(string(p))
+	} else {
+		th.logger.Info(string(p))
+	}
 	return 0, nil
 }
 
-func NewFileLog(config *LogConfigure, name string) *LogFileWrite {
-	l := &LogFileWrite{}
+func NewFileLog(config *LogConfigure, tag, name string) *LogFileWrite {
+	l := &LogFileWrite{
+		tag: tag,
+	}
 	l.logger = logrus.New()
 	l.logger.SetOutput(os.Stdout)
 	hook, err := lumberjackrus.NewHook(
@@ -191,7 +204,9 @@ func NewFileLog(config *LogConfigure, name string) *LogFileWrite {
 			LocalTime: false,
 		},
 		logrus.DebugLevel,
-		&logrus.JSONFormatter{},
+		&logrus.JSONFormatter{
+			TimestampFormat: time.RFC3339Nano,
+		},
 		nil,
 	)
 	if err != nil {

@@ -38,5 +38,6 @@ func Test_Help(t *testing.T) {
 }
 
 func Test_Track(t *testing.T) {
+	common.OpenDebugGracefulExit()
 	t.Logf(common.GetStack(5))
 }

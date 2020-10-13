@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"os"
 	"path/filepath"
 	"sync"
 	"time"
@@ -21,7 +22,7 @@ import (
 
 const (
 	retainSnapshotCount = 2
-	raftTimeout         = 10 * time.Second
+	raftTimeout         = 4 * time.Second
 	raftLogCacheSize    = 512
 )
 
@@ -65,6 +66,7 @@ type RaftStore struct {
 	OnStateChg  common.SafeEvent
 	OnLeaderChg common.SafeEvent
 	OnLeader    common.SafeEvent
+	OnPeerAdd   common.SafeEvent
 
 	transport *raft.NetworkTransport
 
@@ -75,6 +77,12 @@ type RaftStore struct {
 	exitChan chan struct{}
 
 	goFunc common.GoFunc
+
+	leader   bool
+	exitWait sync.WaitGroup
+
+	statTicker *common.Ticker
+	stopped    bool
 }
 
 func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoFunc) *RaftStore {
@@ -85,6 +93,7 @@ func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoF
 		servers:  raftServers{},
 		goFunc:   goFunc,
 		exitChan: make(chan struct{}, 1),
+		stopped:  false,
 	}
 }
 func (th *RaftStore) apply(cmd *inner.ApplyCmd) raft.ApplyFuture {
@@ -173,8 +182,8 @@ func (th *RaftStore) DeleteAsync(key string, fn func(err error, rsp interface{})
 		}
 	})
 }
-func (th *RaftStore) Join(nodeId string, addr string, apiAddr string) error {
-	logrus.Infof("Join %s,%s", nodeId, addr)
+func (th *RaftStore) Join(nodeId string, addr string) error {
+	logrus.Infof("[%s]Join %s,%s", th.config.NodeId, nodeId, addr)
 	configFuture := th.raft.GetConfiguration()
 	if err := configFuture.Error(); err != nil {
 		return err
@@ -258,6 +267,8 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	config.LocalID = raft.ServerID(th.config.NodeId)
 	config.LogOutput = logOutput
 	config.LogLevel = logLevel
+	config.SnapshotInterval = 100 * time.Second
+	config.ShutdownOnRemove = false
 	//config.SnapshotInterval = 10 * time.Millisecond
 	addr, err := net.ResolveTCPAddr("tcp", th.config.RaftAddr)
 	if err != nil {
@@ -269,9 +280,6 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 		return err
 	}
 	th.transport = transport
-	if err != nil {
-		return err
-	}
 	var logStore raft.LogStore
 	var stableStore raft.StableStore
 	var snapshot raft.SnapshotStore
@@ -285,7 +293,8 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 			logStore = raft.NewInmemStore()
 		}
 		stableStore = raft.NewInmemStore()
-		snapshot = raft.NewInmemSnapshotStore()
+		//snapshot = raft.NewInmemSnapshotStore()
+		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
 	} else {
 		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
 		if err != nil {
@@ -328,6 +337,13 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	th.runObserver()
 	return nil
 }
+func (th *RaftStore) clearStoreCache() {
+	if err := os.RemoveAll(th.config.StoreDir); err != nil {
+		logrus.Errorf("[%s]clearStoreCache,err,%s", th.config.NodeId, err.Error())
+	} else {
+		logrus.Infof("[%s]clearStoreCache finished", th.config.NodeId)
+	}
+}
 func (th *RaftStore) AddServer(id, addr string) {
 	th.servers.put(id, addr)
 }
@@ -342,11 +358,11 @@ func (th *RaftStore) runObserver() {
 	obsrv := raft.NewObserver(obchan, true, func(o *raft.Observation) bool {
 		return true
 	})
-	th.raft.GetConfiguration()
 	th.raft.RegisterObserver(obsrv)
 	th.goFunc.Go(func() {
 		defer func() {
 			close(obchan)
+			th.exitWait.Done()
 		}()
 		//observer,管道大小弄大点，不然投票容易超时，因为block为true时，channel处理不过来会造成投票的channel阻塞
 		for {
@@ -355,55 +371,61 @@ func (th *RaftStore) runObserver() {
 				switch obs.Data.(type) {
 				case *raft.RequestVoteRequest:
 					ob := obs.Data.(*raft.RequestVoteRequest)
-					logrus.Infof("[Observer][%s]RequestVoteRequest,%v", th.config.NodeId, *ob)
+					logrus.Infof("[Observer][%s][%d]RequestVoteRequest,%v", th.raft.LastIndex(), th.config.NodeId, *ob)
 				case raft.RaftState:
 					ob := obs.Data.(raft.RaftState)
-					logrus.Debugf("[Observer][%s]RaftState,%v", th.config.NodeId, ob)
-					if th.runChan != nil {
-						th.runChan <- func() {
-							th.OnStateChg.EmitSafe(ob)
-						}
-					} else {
-						th.OnStateChg.EmitSafe(ob)
-					}
+					th.eventEmit(&th.OnStateChg, ob)
+					th.setLeader(ob == raft.Leader)
 				case raft.PeerObservation:
 					ob := obs.Data.(raft.PeerObservation)
-					logrus.Infof("[Observer][%s]PeerObservation,%v", th.config.NodeId, ob)
+					logrus.Infof("[Observer][%s][%d]PeerObservation,%v", th.config.NodeId, th.raft.LastIndex(), ob)
 					if ob.Removed {
 						th.peers.Delete(ob.Peer.ID)
 					} else {
-						th.peers.Store(ob.Peer.ID, ob.Peer)
+						th.peers.Store(ob.Peer.ID, ob.Peer.Address)
+						th.eventEmit(&th.OnPeerAdd, string(ob.Peer.ID))
 					}
 				case raft.LeaderObservation:
 					ob := obs.Data.(raft.LeaderObservation)
 					if !th.IsLeader() { //通知leader的addr
-						if th.runChan != nil {
-							th.runChan <- func() {
-								th.OnLeaderChg.EmitSafe(string(ob.Leader))
-							}
-						} else {
-							th.OnLeaderChg.EmitSafe(string(ob.Leader))
-						}
+						th.eventEmit(&th.OnLeaderChg, string(ob.Leader))
+					} else {
+						th.setLeader(string(ob.Leader) == th.config.RaftAddr)
 					}
-					logrus.Infof("[Observer][%s]LeaderObservation,%v", th.config.NodeId, ob)
+					logrus.Infof("[Observer][%s][%d]LeaderObservation,%s", th.config.NodeId, th.raft.LastIndex(), ob.Leader)
 				}
 			case leader := <-th.raft.LeaderCh():
-				logrus.Infof("[Leader] %v", leader)
-				if th.runChan != nil {
-					th.runChan <- func() {
-						th.OnLeader.EmitSafe(leader)
-					}
-				} else {
-					th.OnLeader.EmitSafe(leader)
-				}
+				logrus.Infof("[Observer][%s][%d]Leader,%v", th.config.NodeId, th.raft.LastIndex(), leader)
+				th.setLeader(leader)
 			case <-th.exitChan:
-				logrus.Debugf("RaftStore.runObserver exit")
+				logrus.Infof("[Observer][%s][%d]Exit", th.config.NodeId, th.raft.LastIndex())
 				return
 			}
 		}
 	})
+
+	th.statTicker = common.NewTicker(5*time.Second, func() {
+		logrus.Debugf("[%s][%v]%v", th.config.NodeId, th.raft.State(), th.raft.Stats())
+	})
+}
+func (th *RaftStore) eventEmit(ev *common.SafeEvent, arg interface{}) {
+	if th.runChan != nil {
+		th.runChan <- func() {
+			ev.EmitSafe(arg)
+		}
+	} else {
+		ev.EmitSafe(arg)
+	}
 }
 
+//非协程安全的
+func (th *RaftStore) setLeader(leader bool) {
+	logrus.Infof("[%s]setLeader,%v,%v", th.config.NodeId, th.leader, leader)
+	if th.leader != leader {
+		th.leader = leader
+		th.eventEmit(&th.OnLeader, leader)
+	}
+}
 func (th *RaftStore) IsLeader() bool {
 	return th.raft.State() == raft.Leader
 }
@@ -411,8 +433,15 @@ func (th *RaftStore) IsFollower() bool {
 	return th.raft.State() == raft.Follower
 }
 func (th *RaftStore) release() {
+	th.raft = nil
 }
+
+//阻塞的
 func (th *RaftStore) Shutdown() {
+	if th.stopped {
+		return
+	}
+	th.stopped = true
 	if th.raft != nil {
 		th.transport.Close()
 		f := th.raft.Shutdown()
@@ -420,7 +449,9 @@ func (th *RaftStore) Shutdown() {
 			logrus.Warn("shutdown raft err,%s", e.Error())
 		}
 		if th.exitChan != nil {
+			th.exitWait.Add(1)
 			th.exitChan <- struct{}{}
+			//th.exitWait.Wait()
 		}
 		if th.raftStore != nil {
 			th.raftStore.Close()
@@ -428,6 +459,25 @@ func (th *RaftStore) Shutdown() {
 		if th.logStore != nil {
 			th.logStore.Close()
 		}
+		if th.statTicker != nil {
+			th.statTicker.Stop()
+			th.statTicker = nil
+		}
+		th.clearStoreCache()
+	}
+}
+func (th *RaftStore) GetNodes() []raft.Server {
+	if f := th.raft.GetConfiguration(); f.Error() == nil {
+		return f.Configuration().Servers
+	}
+	return nil
+}
+
+func (th *RaftStore) ReloadNode() {
+	nodes := th.GetNodes()
+	logrus.Debugf("[%s]ReloadNode,%v", th.config.NodeId, nodes)
+	for _, node := range nodes {
+		th.peers.Store(node.ID, node.Address)
 	}
 }
 
