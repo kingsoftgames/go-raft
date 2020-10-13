@@ -30,6 +30,9 @@ import (
 )
 
 const (
+	VER = "v1.2.0"
+)
+const (
 	tryConnectInterval = 2000 * time.Millisecond
 	grpcTimeout        = 5000 * time.Millisecond
 	healthInterval     = 2000 * time.Millisecond
@@ -271,7 +274,7 @@ func (th *MainApp) Init(configPath string) int {
 	th.healthTicker()
 	th.watchJoinFile()
 	th.Work()
-	logrus.Infof("[%s]Init finished[%d]", th.config.NodeId, os.Getpid())
+	logrus.Infof("[%s]Init finished[%s][%d]", th.config.NodeId, VER, os.Getpid())
 	return 0
 }
 func (th *MainApp) release() {
