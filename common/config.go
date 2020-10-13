@@ -64,7 +64,7 @@ func NewDefaultConfigure() *Configure {
 		Codec:                 "msgpack",
 		LogConfig:             NewDefaultLogConfigure(),
 		PortShift:             0,
-		NodeId:                "",
+		NodeId:                "n",
 		JoinAddr:              "",
 		JoinFile:              "",
 		TryJoinTime:           3,
