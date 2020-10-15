@@ -33,7 +33,12 @@ type FutureSlice struct {
 var cnt, totalTime int64
 
 func GetFutureAve() string {
-	return fmt.Sprintf("FutureAve cnt %d, totalTime %dmics,ave %vmics", cnt, totalTime, totalTime/cnt)
+	_cnt := atomic.LoadInt64(&cnt)
+	_totalTime := atomic.LoadInt64(&totalTime)
+	if _cnt > 0 {
+		return fmt.Sprintf("FutureAve cnt %d, totalTime %dms,qps %v/s,ave %vmic", _cnt, _totalTime/1e3, cnt/(_totalTime/1e6), _totalTime/cnt)
+	}
+	return fmt.Sprintf("FutureAve cnt %d, totalTime %dmics,ave %vmics", 0, 0, 0)
 }
 
 //TODO only support one this version

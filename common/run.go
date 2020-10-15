@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"hash/fnv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -91,10 +92,10 @@ func (th *LogicChan) Start() {
 				select {
 				case f := <-th.runChan[idx]:
 					deal := func(fn func()) {
-						n := time.Now().UnixNano()
+						n := time.Now().UnixNano() / 1e3
 						fn()
-						th.qps[idx].TotalTime += time.Now().UnixNano() - n
-						th.qps[idx].Cnt++
+						atomic.AddInt64(&th.qps[idx].TotalTime, (time.Now().UnixNano()/1e3)-n)
+						atomic.AddInt64(&th.qps[idx].Cnt, 1)
 					}
 					deal(f)
 					if len(th.runChan[idx]) > 0 {
@@ -116,16 +117,26 @@ func (th *LogicChan) Stop() {
 func (th *LogicChan) GetQPS() []string {
 	info := make([]string, len(th.qps)+1)
 	var cnt, totalTime, q int64
-	for i, qps := range th.qps {
-		if qps.Cnt > 0 && qps.TotalTime > 0 {
-			cnt += qps.Cnt
-			totalTime += qps.TotalTime
-			q += 1e9 / (qps.TotalTime / qps.Cnt)
-			info[i] = fmt.Sprintf("chan(%d) call %d,totaltime %d,per %d nans,qps=%d", i, qps.Cnt, qps.TotalTime, qps.TotalTime/qps.Cnt, 1e9/(qps.TotalTime/qps.Cnt))
+	for i, _ := range th.qps {
+		_cnt := atomic.LoadInt64(&th.qps[i].Cnt)
+		_totalTime := atomic.LoadInt64(&th.qps[i].TotalTime)
+		if _cnt > 0 && _totalTime > 0 {
+			cnt += _cnt
+			totalTime += _totalTime
+			q += 1e6 / (_totalTime / _cnt)
+			info[i] = fmt.Sprintf("chan(%d) call %d,totaltime %d,per %d nans,qps=%d", i, _cnt, _totalTime, _totalTime/_cnt, 1e6/(_totalTime/_cnt))
 		}
 	}
 	if cnt > 0 && totalTime > 0 {
 		info[len(th.qps)] = fmt.Sprintf("total call %d,totaltime %d,per %d nans,qps=%d", cnt, totalTime, totalTime/cnt, q)
 	}
 	return info
+}
+func (th *LogicChan) GetCnt() (int64, int64) {
+	var cnt, totalTime int64
+	for i, _ := range th.qps {
+		cnt += atomic.LoadInt64(&th.qps[i].Cnt)
+		totalTime += atomic.LoadInt64(&th.qps[i].TotalTime)
+	}
+	return cnt, totalTime
 }

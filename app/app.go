@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -172,7 +173,10 @@ func (th *MainApp) Init(configPath string) int {
 	if !th.checkCfg() {
 		return -1
 	}
+	th.initDebugConfig()
 	common.InitLog(th.config.LogConfig)
+	s, _ := json.Marshal(th.config)
+	logrus.Infof("Configure : %s", string(s))
 	common.InitCodec(th.config.Codec)
 	if err := th.app.Init(th); err != nil {
 		logrus.Errorf("app Init err,%s", err.Error())
@@ -277,6 +281,26 @@ func (th *MainApp) Init(configPath string) int {
 	logrus.Infof("[%s]Init finished[%s][%d]", th.config.NodeId, VER, os.Getpid())
 	return 0
 }
+func (th *MainApp) initDebugConfig() {
+	DebugTraceFutureLine = th.config.DebugConfig.TraceLine
+	if th.config.DebugConfig.PrintIntervalMs > 0 {
+		logrus.Infof("[%s]initDebugConfig", th.config.NodeId)
+		var cnt, totalTime, t int64
+		common.NewTicker(time.Duration(th.config.DebugConfig.PrintIntervalMs)*time.Millisecond, func() {
+			logrus.Infof("[%s]%s", th.config.NodeId, GetFutureAve())
+			th.PrintQPS()
+			_t := time.Now().UnixNano()
+			_cnt, _totalTime := th.runLogic.GetCnt()
+			if cnt > 0 {
+				__cnt := _cnt - cnt
+				__totalTime := _totalTime - totalTime
+				__t := _t - t
+				logrus.Infof("[%s]LastTerm %dms,cnt %d,totalTime %dms, qps %v/s,", th.config.NodeId, __t/1e6, __cnt, __totalTime/1e3, __cnt/(__totalTime/1e6))
+			}
+			cnt, totalTime, t = _cnt, _totalTime, _t
+		})
+	}
+}
 func (th *MainApp) release() {
 	defer func() {
 		th.Done()
@@ -286,10 +310,9 @@ func (th *MainApp) release() {
 	logrus.Infof("[%s]release", th.config.NodeId)
 }
 func (th *MainApp) PrintQPS() {
-	for _, qps := range th.runLogic.GetQPS() {
-		if len(qps) > 0 {
-			logrus.Debugf(qps)
-		}
+	qps := th.runLogic.GetQPS()
+	if len(qps) > 0 {
+		logrus.Infof("[%s]QPS,%s", th.config.NodeId, strings.Join(qps, "\\n"))
 	}
 }
 
@@ -1235,14 +1258,12 @@ func (th *MainApp) runGRpcRequest() {
 			case <-th.stopChan:
 				stopFunc()
 			case <-realStop:
-				logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+				logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 				return
 			case <-th.sig:
 				break
 			}
 		case raft.Follower:
-
-			//TODO 会存在持续占有cpu问题
 			if con := th.inner.GetInner(); con != nil {
 				select {
 				case f := <-th.grpcPrioritizedChan:
@@ -1252,7 +1273,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+					logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 					return
 				case <-th.sig:
 					break
@@ -1260,10 +1281,10 @@ func (th *MainApp) runGRpcRequest() {
 			} else {
 				select {
 				case <-th.stopChan:
-					logrus.Debugf("[%s]follower nil", th.config.NodeId)
+					logrus.Infof("[%s]follower nil", th.config.NodeId)
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+					logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 					return
 				case <-th.sig:
 					break
@@ -1274,13 +1295,12 @@ func (th *MainApp) runGRpcRequest() {
 			case <-th.stopChan:
 				stopFunc()
 			case <-realStop:
-				logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+				logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 				return
 			case <-th.sig:
 				break
 			}
 		case raft.Shutdown:
-			//TODO 会存在持续占有cpu问题
 			if con := th.inner.GetLastInner(); con != nil {
 				select {
 				case f := <-th.grpcPrioritizedChan:
@@ -1290,7 +1310,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]shutdown not nil", th.config.NodeId)
+					logrus.Infof("[%s]shutdown not nil", th.config.NodeId)
 					return
 				case <-th.sig:
 					break
@@ -1300,7 +1320,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]shutdown nil", th.config.NodeId)
+					logrus.Infof("[%s]shutdown nil", th.config.NodeId)
 					return
 				case <-th.sig:
 					break
