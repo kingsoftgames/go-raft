@@ -286,8 +286,8 @@ func (th *MainApp) initDebugConfig() {
 		logrus.Infof("[%s]initDebugConfig", th.config.NodeId)
 		var cnt, totalTime, t int64
 		common.NewTicker(time.Duration(th.config.DebugConfig.PrintIntervalMs)*time.Millisecond, func() {
-			logrus.Infof("[%s]%s", th.config.NodeId, GetFutureAve())
-			th.PrintQPS()
+			//logrus.Infof("[%s]%s", th.config.NodeId, GetFutureAve())
+			//th.PrintQPS()
 			_t := time.Now().UnixNano()
 			_cnt, _totalTime := th.runLogic.GetCnt()
 			if cnt > 0 {
