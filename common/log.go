@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 	"strings"
@@ -31,6 +32,10 @@ const (
 
 	timeFormat = "2006-01-02 15:04:05.000"
 )
+
+func closeLogFile(config *LogConfigure) bool {
+	return strings.ToLower(config.Path) == "stdout"
+}
 
 type textFormat struct {
 	forceColors      bool
@@ -121,6 +126,9 @@ func InitLog(config *LogConfigure) {
 }
 
 func addFileHook(config *LogConfigure) error {
+	if closeLogFile(config) {
+		return nil
+	}
 	level := getLogLevel(config.Level)
 	hook, err := lumberjackrus.NewHook(
 		&lumberjackrus.LogFile{
@@ -189,7 +197,10 @@ func (th *LogFileWrite) Write(p []byte) (n int, err error) {
 	return 0, nil
 }
 
-func NewFileLog(config *LogConfigure, tag, name string) *LogFileWrite {
+func NewFileLog(config *LogConfigure, tag, name string) io.Writer {
+	if closeLogFile(config) {
+		return os.Stdout
+	}
 	l := &LogFileWrite{
 		tag: tag,
 	}
