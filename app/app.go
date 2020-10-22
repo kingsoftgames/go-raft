@@ -2,9 +2,9 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -172,14 +172,17 @@ func (th *MainApp) Init(configPath string) int {
 	if !th.checkCfg() {
 		return -1
 	}
+	th.initDebugConfig()
 	common.InitLog(th.config.LogConfig)
+	s, _ := json.Marshal(th.config)
+	logrus.Infof("Configure : %s", string(s))
 	common.InitCodec(th.config.Codec)
 	if err := th.app.Init(th); err != nil {
 		logrus.Errorf("app Init err,%s", err.Error())
 		return -2
 	}
 	th.Name = th.config.NodeId
-	th.runLogic.Init(runtime.NumCPU()-1, th)
+	th.runLogic.Init(th.config.RunChanNum, th)
 	th.innerLogic.Init(1, th)
 	th.config.StoreDir = filepath.Join(th.config.StoreDir, th.config.NodeId)
 	th.store = store.New(th.config, nil, th)
@@ -253,7 +256,7 @@ func (th *MainApp) Init(configPath string) int {
 		return -4
 	}
 	th.inner.SetHealth(true)
-	th.WaitGo()
+	//th.WaitGo()
 
 	th.api = New(th.config.GrpcApiAddr, th.store, th, "api")
 	th.app.Register(th.api.GetGrpcServer())
@@ -262,7 +265,7 @@ func (th *MainApp) Init(configPath string) int {
 		return -5
 	}
 	th.api.SetHealth(false)
-	th.WaitGo()
+	//th.WaitGo()
 	th.Go(th.runOtherRequest)
 	th.WaitGo()
 
@@ -277,6 +280,26 @@ func (th *MainApp) Init(configPath string) int {
 	logrus.Infof("[%s]Init finished[%s][%d]", th.config.NodeId, VER, os.Getpid())
 	return 0
 }
+func (th *MainApp) initDebugConfig() {
+	DebugTraceFutureLine = th.config.DebugConfig.TraceLine
+	if th.config.DebugConfig.PrintIntervalMs > 0 {
+		logrus.Infof("[%s]initDebugConfig", th.config.NodeId)
+		var cnt, totalTime, t int64
+		common.NewTicker(time.Duration(th.config.DebugConfig.PrintIntervalMs)*time.Millisecond, func() {
+			logrus.Infof("[%s]%s", th.config.NodeId, GetFutureAve())
+			th.PrintQPS()
+			_t := time.Now().UnixNano()
+			_cnt, _totalTime := th.runLogic.GetCnt()
+			if cnt > 0 {
+				__cnt := _cnt - cnt
+				__totalTime := _totalTime - totalTime
+				__t := _t - t
+				logrus.Infof("[%s]LastTerm %dms,cnt %d,totalTime %dms, qps %v/s,", th.config.NodeId, __t/1e6, __cnt, __totalTime/1e3, __cnt/(__totalTime/1e6))
+			}
+			cnt, totalTime, t = _cnt, _totalTime, _t
+		})
+	}
+}
 func (th *MainApp) release() {
 	defer func() {
 		th.Done()
@@ -286,10 +309,9 @@ func (th *MainApp) release() {
 	logrus.Infof("[%s]release", th.config.NodeId)
 }
 func (th *MainApp) PrintQPS() {
-	for _, qps := range th.runLogic.GetQPS() {
-		if len(qps) > 0 {
-			logrus.Debugf(qps)
-		}
+	qps := th.runLogic.GetQPS()
+	if len(qps) > 0 {
+		logrus.Infof("[%s]QPS,%s", th.config.NodeId, strings.Join(qps, "\\n"))
 	}
 }
 
@@ -297,25 +319,71 @@ func (th *MainApp) PrintQPS() {
 func (th *MainApp) Stopped() {
 	th.stopWait.Wait()
 }
-func (th *MainApp) GRpcHandle(f *ReplyFuture) {
+func (th *MainApp) GRpcHandlePrioritize(f *ReplyFuture) {
+	f.prioritized = true
 	th.Go(func() {
+		th.GRpcHandle(f)
+	})
+}
+func (th *MainApp) GRpcHandle(f *ReplyFuture) {
+	if !th.config.DebugConfig.GRpcHandleHash {
 		f.AddTimeLine("GRpcHandle")
 		f.cnt++
 		switch f.cmd {
 		case FutureCmdTypeGRpc:
 			if f.prioritized {
-				th.grpcPrioritizedChan <- f
+				th.Go(func() {
+					th.grpcPrioritizedChan <- f
+				})
 			} else {
-				th.grpcChan <- f
+				//
+				switch th.store.GetRaft().State() {
+				case raft.Leader:
+					th.leaderGRpc(f)
+				case raft.Follower:
+					if con := th.inner.GetInner(); con != nil {
+						th.followerGRpc(f, con)
+					} else {
+						th.GRpcHandlePrioritize(f)
+					}
+				case raft.Candidate:
+					th.GRpcHandlePrioritize(f)
+				case raft.Shutdown:
+					if con := th.inner.GetLastInner(); con != nil {
+						th.followerGRpc(f, con)
+					} else {
+						f.response(errors.New("shutdown"))
+					}
+				}
 			}
 		default:
-			if f.cnt > 1 {
-				time.Sleep(time.Duration(f.cnt) * 5 * time.Millisecond)
-			}
-			th.otherChan <- f
+			th.Go(func() {
+				if f.cnt > 1 {
+					time.Sleep(time.Duration(f.cnt) * 5 * time.Millisecond)
+				}
+				th.otherChan <- f
+			})
 		}
+	} else {
+		th.Go(func() {
+			f.AddTimeLine("GRpcHandle")
+			f.cnt++
+			switch f.cmd {
+			case FutureCmdTypeGRpc:
+				if f.prioritized {
+					th.grpcPrioritizedChan <- f
+				} else {
+					th.grpcChan <- f
+				}
+			default:
+				if f.cnt > 1 {
+					time.Sleep(time.Duration(f.cnt) * 5 * time.Millisecond)
+				}
+				th.otherChan <- f
+			}
 
-	})
+		})
+	}
 }
 func (th *MainApp) updateLeaderClient(con *InnerCon) {
 	th.inner.UpdateClient(con)
@@ -815,12 +883,6 @@ func (th *MainApp) removeMember(nodeId string) error {
 }
 
 func (th *MainApp) leaderGRpc(f *ReplyFuture) {
-	t := time.Now().UnixNano()
-	defer func() {
-		if dif := time.Now().UnixNano() - t; dif > 1e9 {
-			logrus.Errorf("[%s]leaderGRpc[%v]", th.config.NodeId, dif)
-		}
-	}()
 	f.AddTimeLine("leaderGRpc")
 	if f.prioritized {
 		logrus.Warnf("[%s]leaderGRpc,%v", th.config.NodeId, f.req)
@@ -832,9 +894,8 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 			return
 		}
 		f.AddTimeLine("leaderGRpcHandle")
-		r := rand.Int63()
 		if f.prioritized {
-			logrus.Warnf("[%s]leaderGRpc,%d,%v", th.config.NodeId, r, f.req)
+			logrus.Warnf("[%s]leaderGRpc,%v", th.config.NodeId, f.req)
 		}
 		message := f.req.(protoreflect.ProtoMessage)
 		method := common.GetHandleFunctionName(message)
@@ -853,7 +914,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 					err == raft.ErrLeadershipTransferInProgress ||
 					err == raft.ErrEnqueueTimeout ||
 					err == raft.ErrNotLeader { //
-					logrus.Warnf("[%s]ApplyLog warn,%s,%d,%v", th.config.NodeId, err.Error(), r, f.req)
+					logrus.Warnf("[%s]ApplyLog warn,%s,%v", th.config.NodeId, err.Error(), f.req)
 					if f.trans {
 						logrus.Warnf("[%s]leaderGRpc trans back,%v", th.config.NodeId, f.req)
 						f.response(errTransfer)
@@ -861,8 +922,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 					}
 					//Back to grpc chan
 					f.rspFuture.Clear()
-					f.prioritized = true
-					th.GRpcHandle(f)
+					th.GRpcHandlePrioritize(f)
 					return
 				} else {
 					logrus.Errorf("[%s]ApplyLog error,%s", th.config.NodeId, err.Error())
@@ -870,7 +930,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 				f.response(err)
 			} else {
 				if f.prioritized {
-					logrus.Warnf("[%s]leaderGRpc result,%d,%v", th.config.NodeId, r, f.req)
+					logrus.Warnf("[%s]leaderGRpc result,%v", th.config.NodeId, f.req)
 				}
 				f.AddTimeLine("Response")
 				f.response(nil)
@@ -909,7 +969,7 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 	}
 
 	if th.store.GetRaft().State() == raft.Leader {
-		th.GRpcHandle(f)
+		th.GRpcHandlePrioritize(f)
 		return
 	}
 	req := &inner.TransGrpcReq{
@@ -950,8 +1010,7 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 				logrus.Warnf("[%s]followerGRpc back,%v", th.config.NodeId, f.req)
 				//Back to grpc chan
 				f.rspFuture.Clear()
-				f.prioritized = true
-				th.GRpcHandle(f)
+				th.GRpcHandlePrioritize(f)
 			} else {
 				f.response(common.Decode(rsp.Data, f.rsp))
 			}
@@ -1235,14 +1294,12 @@ func (th *MainApp) runGRpcRequest() {
 			case <-th.stopChan:
 				stopFunc()
 			case <-realStop:
-				logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+				logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 				return
 			case <-th.sig:
 				break
 			}
 		case raft.Follower:
-
-			//TODO 会存在持续占有cpu问题
 			if con := th.inner.GetInner(); con != nil {
 				select {
 				case f := <-th.grpcPrioritizedChan:
@@ -1252,7 +1309,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+					logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 					return
 				case <-th.sig:
 					break
@@ -1260,10 +1317,10 @@ func (th *MainApp) runGRpcRequest() {
 			} else {
 				select {
 				case <-th.stopChan:
-					logrus.Debugf("[%s]follower nil", th.config.NodeId)
+					logrus.Infof("[%s]follower nil", th.config.NodeId)
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+					logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 					return
 				case <-th.sig:
 					break
@@ -1274,13 +1331,12 @@ func (th *MainApp) runGRpcRequest() {
 			case <-th.stopChan:
 				stopFunc()
 			case <-realStop:
-				logrus.Debugf("[%s]rcv realStop", th.config.NodeId)
+				logrus.Infof("[%s]rcv realStop", th.config.NodeId)
 				return
 			case <-th.sig:
 				break
 			}
 		case raft.Shutdown:
-			//TODO 会存在持续占有cpu问题
 			if con := th.inner.GetLastInner(); con != nil {
 				select {
 				case f := <-th.grpcPrioritizedChan:
@@ -1290,7 +1346,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]shutdown not nil", th.config.NodeId)
+					logrus.Infof("[%s]shutdown not nil", th.config.NodeId)
 					return
 				case <-th.sig:
 					break
@@ -1300,7 +1356,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Debugf("[%s]shutdown nil", th.config.NodeId)
+					logrus.Infof("[%s]shutdown nil", th.config.NodeId)
 					return
 				case <-th.sig:
 					break

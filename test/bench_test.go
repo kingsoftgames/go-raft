@@ -15,6 +15,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hashicorp/raft"
+
 	"github.com/sirupsen/logrus"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -22,7 +24,7 @@ import (
 	"git.shiyou.kingsoft.com/infra/go-raft/app"
 )
 
-var count = 500
+var count = 50000
 var timeout = 10 * time.Second
 
 func Test_markSingleAppGRpc(t *testing.T) {
@@ -31,21 +33,241 @@ func Test_markSingleAppGRpc(t *testing.T) {
 	singleAppTemplate(t, func() {
 		c := newClient("127.0.0.1:18310")
 		var w sync.WaitGroup
-
+		var te common.TimeElapse
+		te.Call("begin")
+		//app.DebugTraceFutureLine = true
 		for i := 0; i < count; i++ {
 			w.Add(1)
 			go func() {
-				defer w.Done()
 				key := strconv.Itoa(rand.Int())
 				runClient(t, c, "set", key, 1, true)
-				runClient(t, c, "get", key, 1, true)
-				runClient(t, c, "del", key, 1, true)
-				runClient(t, c, "get", key, 1, true)
+				//runClient(t, c, "get", key, 1, true)
+				//runClient(t, c, "del", key, 1, true)
+				//runClient(t, c, "get", key, 1, true)
+				w.Done()
 			}()
 		}
 		w.Wait()
+		te.Call("end")
+		printTotalTimeLine()
 	})
 }
+
+func Test_markSingleAppGRpcLocalTest(t *testing.T) {
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
+	})
+	singleAppTemplate(t, func() {
+		GRpcLocalQuery("127.0.0.1:18310", "set", count, false, timeout)
+	})
+}
+func Test_markClusterAppGRpcLocalTest(t *testing.T) {
+	genTestClusterApp2GrpcYaml()
+	clusterApp2Template(t, func() {
+		GRpcLocalQuery("127.0.0.1:18310", "set", count, false, timeout)
+	})
+}
+
+type Test struct {
+	a int
+}
+
+func Test_Go(t *testing.T) {
+	ch := make(chan interface{})
+	e := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case c := <-ch:
+				print(c)
+				time.Sleep(2 * time.Second)
+			case <-e:
+				t.Log("exit")
+			default:
+			}
+		}
+
+	}()
+	go func() {
+		select {
+		case ch <- 1:
+		case <-e:
+			t.Log("exit0")
+		}
+	}()
+	go func() {
+		select {
+		case ch <- 1:
+		case <-e:
+			t.Log("exit1")
+		}
+	}()
+	time.Sleep(time.Second)
+	go func() {
+		close(e)
+	}()
+	time.Sleep(time.Second)
+
+	var exit common.GracefulExit
+	for i := 0; i < 1000000; i++ {
+		var funcGo common.GracefulGoFunc
+		funcGo.UpdateExitWait(&exit)
+		funcGo.Go(func() {
+		})
+		funcGo.WaitGo()
+	}
+
+}
+func Test_RaftSingle_Apply(t *testing.T) {
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
+	})
+	var exitWait common.GracefulExit
+	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
+	if rst := appLeader.Init(leaderYaml); rst != 0 {
+		t.Errorf("appLeader Init error,%d", rst)
+		return
+	}
+	clientFunc := func() {
+		var w sync.WaitGroup
+		var te common.TimeElapse
+		te.Call("begin")
+		for i := 0; i < count; i++ {
+			w.Add(1)
+			go func(idx int) {
+				//var req SetReq
+				//key := strconv.Itoa(idx)
+				//req.A = map[string]*TestUnit{}
+				//req.A[key] = &TestUnit{
+				//	A: key,
+				//}
+				//f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &SetRsp{TimeLine: []*TimeLineUnit{}})
+				//appLeader.GRpcHandle(f)
+				f := appLeader.GetStore().Set(strconv.Itoa(idx), idx)
+				f.Error()
+				w.Done()
+				//runChan.Handle(idx, 10*time.Second, func(err error) {
+				//	f := appLeader.GetStore().SetTest(strconv.Itoa(idx), idx)
+				//	f.Error()
+				//	w.Done()
+				//})
+			}(i)
+			//runChan.Handle(i, 10*time.Second, func(err error) {
+			//	f := appLeader.GetStore().SetTest(strconv.Itoa(i), i)
+			//	f.Error()
+			//	w.Done()
+			//})
+			//func(idx int) {
+			//	f := appLeader.GetStore().SetTest(strconv.Itoa(idx), idx)
+			//	f.Error()
+			//	w.Done()
+			//}(i)
+		}
+		w.Wait()
+		te.Call("end")
+	}
+	appLeader.GetStore().OnStateChg.Add(func(i interface{}) {
+		if i.(raft.RaftState) == raft.Leader {
+			go func() {
+				n := time.Now().UnixNano()
+				logrus.Infof("begin,%d", n)
+				clientFunc()
+				logrus.Infof("end,%d", time.Now().UnixNano()-n)
+				t.Logf("singleApp %d ms", (time.Now().UnixNano()-n)/1e6)
+				appLeader.Stop()
+			}()
+		}
+	})
+	appLeader.Start()
+	exitWait.Wait()
+}
+func Test_RaftCluster_Apply(t *testing.T) {
+	genTestClusterApp2GrpcYaml()
+
+	var exitWait common.GracefulExit
+	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
+	if rst := appLeader.Init(leaderYaml); rst != 0 {
+		t.Errorf("appLeader Init error,%d", rst)
+		return
+	}
+	clientFunc := func() {
+		var w sync.WaitGroup
+		var te common.TimeElapse
+		te.Call("begin")
+		for i := 0; i < count; i++ {
+			w.Add(1)
+			go func(idx int) {
+				//var req SetReq
+				//key := strconv.Itoa(idx)
+				//req.A = map[string]*TestUnit{}
+				//req.A[key] = &TestUnit{
+				//	A: key,
+				//}
+				//f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &SetRsp{TimeLine: []*TimeLineUnit{}})
+				//appLeader.GRpcHandle(f)
+				f := appLeader.GetStore().Set(strconv.Itoa(idx), idx)
+				f.Error()
+				w.Done()
+				//runChan.Handle(idx, 10*time.Second, func(err error) {
+				//	f := appLeader.GetStore().SetTest(strconv.Itoa(idx), idx)
+				//	f.Error()
+				//	w.Done()
+				//})
+			}(i)
+			//runChan.Handle(i, 10*time.Second, func(err error) {
+			//	f := appLeader.GetStore().SetTest(strconv.Itoa(i), i)
+			//	f.Error()
+			//	w.Done()
+			//})
+			//func(idx int) {
+			//	f := appLeader.GetStore().SetTest(strconv.Itoa(idx), idx)
+			//	f.Error()
+			//	w.Done()
+			//}(i)
+		}
+		w.Wait()
+		te.Call("end")
+	}
+	var once sync.Once
+	appLeader.GetStore().OnStateChg.Add(func(i interface{}) {
+		if i.(raft.RaftState) == raft.Leader {
+			appFollower := app.NewMainApp(app.CreateApp("test"), &exitWait)
+			appFollower.OnLeaderChg.Add(func(i interface{}) {
+				if len(i.(string)) == 0 {
+					return
+				}
+				appFollower2 := app.NewMainApp(app.CreateApp("test"), &exitWait)
+				appFollower2.OnLeaderChg.Add(func(i interface{}) {
+					if len(i.(string)) == 0 {
+						return
+					}
+					go func() {
+						n := time.Now().UnixNano()
+						once.Do(clientFunc)
+						t.Logf("clusterApp2 %f ms", float64(time.Now().UnixNano()-n)/1e6)
+						appLeader.Stop()
+						appFollower.Stop()
+						appFollower2.Stop()
+					}()
+				})
+				if rst := appFollower2.Init(follower2Yaml); rst != 0 {
+					t.Errorf("appFollower2 Init error,%d", rst)
+					appLeader.Stop()
+					appFollower.Stop()
+					return
+				}
+				appFollower2.Start()
+			})
+			if rst := appFollower.Init(followerYaml); rst != 0 {
+				t.Errorf("appFollower Init error,%d", rst)
+				appLeader.Stop()
+				return
+			}
+			appFollower.Start()
+		}
+	})
+	appLeader.Start()
+	exitWait.Wait()
+}
+
 func Test_markSingleAppHttp(t *testing.T) {
 	genTestSingleYaml()
 	singleAppTemplate(t, func() {
@@ -248,6 +470,18 @@ func printAveQ(t *testing.T) {
 	t.Logf("cnt %d,total %d,ave %v", cnt, totalTime, totalTime/cnt)
 }
 
+var totalTimeLine []TimeLineUnit
+var totalTimeLineCnt int64
+
+func printTotalTimeLine() {
+	timeline := make([]string, 0)
+	for i, _ := range totalTimeLine {
+		totalTimeLine[i].Timeline = totalTimeLine[i].Timeline / totalTimeLineCnt
+		timeline = append(timeline, fmt.Sprintf("%s %d", totalTimeLine[i].Tag, totalTimeLine[i].Timeline))
+	}
+	logrus.Infof("totalCnt %d,%s", totalTimeLineCnt, strings.Join(timeline, ","))
+}
+
 func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTimes int, hash bool) {
 	n := time.Now().UnixNano()
 	defer func() {
@@ -288,7 +522,7 @@ func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTim
 			A:      A,
 			Timeline: []*TimeLineUnit{&TimeLineUnit{
 				Tag:      "Send",
-				Timeline: time.Now().UnixNano() / 1e3,
+				Timeline: time.Now().UnixNano(),
 			}},
 		})
 		if e != nil {
@@ -297,10 +531,16 @@ func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTim
 			//})
 		} else {
 			if app.DebugTraceFutureLine {
+
 				rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
 					Tag:      "Result",
-					Timeline: time.Now().UnixNano() / 1e3,
+					Timeline: time.Now().UnixNano(),
 				})
+				if totalTimeLine == nil {
+					totalTimeLine = make([]TimeLineUnit, len(rsp.TimeLine))
+					totalTimeLineCnt = 0
+				}
+				totalTimeLineCnt++
 				var dif int64
 				timeline := make([]string, 0)
 				for i := len(rsp.TimeLine) - 1; i > 0; i-- {
@@ -308,10 +548,12 @@ func runClient(t *testing.T, c *testGRpcClient, cmd string, key string, writeTim
 					to := rsp.TimeLine[i]
 					dif += to.Timeline - from.Timeline
 					timeline = append(timeline, fmt.Sprintf("%s ==> %s %d", from.Tag, to.Tag, to.Timeline-from.Timeline))
+					totalTimeLine[i].Tag = fmt.Sprintf("%s ==> %s", from.Tag, to.Tag)
+					totalTimeLine[i].Timeline += to.Timeline - from.Timeline
 				}
-				if dif > 3000*1e3 {
-					t.Logf("Timeline(%d): %s", dif, strings.Join(timeline, " , "))
-				}
+				//if dif > 3000*1e3 {
+				t.Logf("Timeline(%d): %s", dif, strings.Join(timeline, " , "))
+				//}
 			}
 			//t.Logf("setrsp, %v", *rsp)
 		}

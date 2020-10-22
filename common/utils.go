@@ -224,3 +224,25 @@ func GoID() int {
 	}
 	return id
 }
+
+type TimeElapse struct {
+	t        int64
+	lastCall string
+	disable  bool
+}
+
+func (th *TimeElapse) Disable() {
+	th.disable = true
+}
+
+func (th *TimeElapse) Call(call string) {
+	if th.disable {
+		return
+	}
+	t := time.Now().UnixNano()
+	if th.t > 0 && t-th.t > 0 {
+		logrus.Warnf("%s = > %s(%d)", th.lastCall, call, t-th.t)
+	}
+	th.t = t
+	th.lastCall = call
+}

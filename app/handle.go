@@ -7,13 +7,13 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/hashicorp/raft"
+
 	"github.com/sirupsen/logrus"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
 
 	"google.golang.org/protobuf/reflect/protoreflect"
-
-	"github.com/hashicorp/raft"
 )
 
 type HandlerValue struct {
@@ -25,29 +25,36 @@ type Handler struct {
 	h map[string]*HandlerValue
 }
 
+type RaftFuture = raft.ApplyFuture
+
 type FutureSlice struct {
-	f []raft.ApplyFuture
+	f []RaftFuture
 	t int64
 }
 
 var cnt, totalTime int64
 
 func GetFutureAve() string {
-	return fmt.Sprintf("FutureAve cnt %d, totalTime %dmics,ave %vmics", cnt, totalTime, totalTime/cnt)
+	_cnt := atomic.LoadInt64(&cnt)
+	_totalTime := atomic.LoadInt64(&totalTime)
+	if _cnt > 0 {
+		return fmt.Sprintf("FutureAve cnt %d, totalTime %dms,qps %v/s,ave %vmic", _cnt, _totalTime/1e3, cnt/(_totalTime/1e6), _totalTime/cnt)
+	}
+	return fmt.Sprintf("FutureAve cnt %d, totalTime %dmics,ave %vmics", 0, 0, 0)
 }
 
 //TODO only support one this version
-func (th *FutureSlice) Add(f raft.ApplyFuture) {
+func (th *FutureSlice) Add(f RaftFuture) {
 	if th.f == nil {
-		th.f = make([]raft.ApplyFuture, 0)
+		th.f = make([]RaftFuture, 0)
 	}
-	if len(th.f) >= 1 {
+	if len(th.f) > 1 {
 		panic("only support one future")
 	}
 	th.f = append(th.f, f)
 	th.t = time.Now().UnixNano() / 1e3
 }
-func (th *FutureSlice) foreach(cb func(int, raft.ApplyFuture)) {
+func (th *FutureSlice) foreach(cb func(int, RaftFuture)) {
 	for i, f := range th.f {
 		cb(i, f)
 	}
@@ -66,7 +73,7 @@ func (th *FutureSlice) Error() error {
 	} else if th.Len() > 1 {
 		var err FutureSliceError = make(FutureSliceError, th.Len())
 		var w sync.WaitGroup
-		th.foreach(func(i int, future raft.ApplyFuture) {
+		th.foreach(func(i int, future RaftFuture) {
 			w.Add(1)
 			go func() {
 				defer w.Done()

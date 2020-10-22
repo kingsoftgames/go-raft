@@ -4,7 +4,12 @@ package test
 
 import (
 	context "context"
+	"errors"
+	"strconv"
+	"sync"
 	"time"
+
+	"github.com/sirupsen/logrus"
 
 	app "git.shiyou.kingsoft.com/infra/go-raft/app"
 )
@@ -41,7 +46,7 @@ func (th *ImplementedTestServer) SetRequest(ctx context.Context, req *SetReq) (*
 	}
 	rsp.TimeLine = append(rsp.TimeLine, &TimeLineUnit{
 		Tag:      "ResultSend",
-		Timeline: time.Now().UnixNano() / 1e3,
+		Timeline: time.Now().UnixNano(),
 	})
 	return rsp, nil
 }
@@ -60,4 +65,66 @@ func (th *ImplementedTestServer) CrashRequest(ctx context.Context, req *CrashReq
 		return nil, f.Error()
 	}
 	return f.Response().(*CrashRsp), nil
+}
+func (th *ImplementedTestServer) LocalRequest(ctx context.Context, req *LocalReq) (*LocalRsp, error) {
+	logrus.Infof("LocalRequest %v", *req)
+	defer logrus.Infof("LocalRequest finished %v", *req)
+	mainApp := th.app.(*testApp).mainApp
+	if !mainApp.GetStore().IsLeader() {
+		return nil, errors.New("not leader")
+	}
+	rsp := &LocalRsp{}
+	var w sync.WaitGroup
+	t := time.Now().UnixNano()
+	for i := 0; i < int(req.Cnt); i++ {
+		w.Add(1)
+		go func(idx int) {
+			switch req.Cmd {
+			case "set":
+				if req.Naked {
+					f := mainApp.GetStore().Set(strconv.Itoa(idx), idx)
+					f.Error()
+				} else {
+					var req SetReq
+					key := strconv.Itoa(idx)
+					req.A = map[string]*TestUnit{}
+					req.A[key] = &TestUnit{
+						A: key,
+					}
+					f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &SetRsp{TimeLine: []*TimeLineUnit{}})
+					mainApp.GRpcHandle(f)
+					f.Error()
+				}
+				w.Done()
+			case "get":
+				if req.Naked {
+					mainApp.GetStore().Get(strconv.Itoa(idx))
+				} else {
+					var req GetReq
+					key := strconv.Itoa(idx)
+					req.A = key
+					f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &GetRsp{})
+					mainApp.GRpcHandle(f)
+					f.Error()
+				}
+				w.Done()
+			case "del":
+				if req.Naked {
+					f := mainApp.GetStore().Delete(strconv.Itoa(idx))
+					f.Error()
+				} else {
+					var req DelReq
+					key := strconv.Itoa(idx)
+					req.A = key
+					f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &DelRsp{})
+					mainApp.GRpcHandle(f)
+					f.Error()
+				}
+				w.Done()
+			}
+		}(i)
+	}
+	w.Wait()
+	rsp.Time = time.Now().UnixNano() - t
+	return rsp, nil
 }

@@ -42,7 +42,7 @@ func clusterAppCrash(t *testing.T, nodeNum int, clientFunc func([]*app.MainApp))
 		go once.Do(func() {
 			n := time.Now().UnixNano()
 			clientFunc(appNode)
-			t.Logf("clusterAppCrash %f ms", float64(time.Now().UnixNano()-n)/10e6)
+			t.Logf("clusterAppCrash %f ms", float64(time.Now().UnixNano()-n)/1e6)
 		})
 	}
 	for i := 0; i < nodeNum; i++ {

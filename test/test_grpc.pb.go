@@ -21,6 +21,7 @@ type TestClient interface {
 	SetRequest(ctx context.Context, in *SetReq, opts ...grpc.CallOption) (*SetRsp, error)
 	DelRequest(ctx context.Context, in *DelReq, opts ...grpc.CallOption) (*DelRsp, error)
 	CrashRequest(ctx context.Context, in *CrashReq, opts ...grpc.CallOption) (*CrashRsp, error)
+	LocalRequest(ctx context.Context, in *LocalReq, opts ...grpc.CallOption) (*LocalRsp, error)
 }
 
 type testClient struct {
@@ -67,6 +68,15 @@ func (c *testClient) CrashRequest(ctx context.Context, in *CrashReq, opts ...grp
 	return out, nil
 }
 
+func (c *testClient) LocalRequest(ctx context.Context, in *LocalReq, opts ...grpc.CallOption) (*LocalRsp, error) {
+	out := new(LocalRsp)
+	err := c.cc.Invoke(ctx, "/test.Test/LocalRequest", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
 // TestServer is the server API for Test service.
 // All implementations must embed UnimplementedTestServer
 // for forward compatibility
@@ -75,6 +85,7 @@ type TestServer interface {
 	SetRequest(context.Context, *SetReq) (*SetRsp, error)
 	DelRequest(context.Context, *DelReq) (*DelRsp, error)
 	CrashRequest(context.Context, *CrashReq) (*CrashRsp, error)
+	LocalRequest(context.Context, *LocalReq) (*LocalRsp, error)
 	mustEmbedUnimplementedTestServer()
 }
 
@@ -93,6 +104,9 @@ func (*UnimplementedTestServer) DelRequest(context.Context, *DelReq) (*DelRsp, e
 }
 func (*UnimplementedTestServer) CrashRequest(context.Context, *CrashReq) (*CrashRsp, error) {
 	return nil, status.Errorf(codes.Unimplemented, "method CrashRequest not implemented")
+}
+func (*UnimplementedTestServer) LocalRequest(context.Context, *LocalReq) (*LocalRsp, error) {
+	return nil, status.Errorf(codes.Unimplemented, "method LocalRequest not implemented")
 }
 func (*UnimplementedTestServer) mustEmbedUnimplementedTestServer() {}
 
@@ -172,6 +186,24 @@ func _Test_CrashRequest_Handler(srv interface{}, ctx context.Context, dec func(i
 	return interceptor(ctx, in, info, handler)
 }
 
+func _Test_LocalRequest_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(LocalReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(TestServer).LocalRequest(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/test.Test/LocalRequest",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(TestServer).LocalRequest(ctx, req.(*LocalReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
 var _Test_serviceDesc = grpc.ServiceDesc{
 	ServiceName: "test.Test",
 	HandlerType: (*TestServer)(nil),
@@ -191,6 +223,10 @@ var _Test_serviceDesc = grpc.ServiceDesc{
 		{
 			MethodName: "CrashRequest",
 			Handler:    _Test_CrashRequest_Handler,
+		},
+		{
+			MethodName: "LocalRequest",
+			Handler:    _Test_LocalRequest_Handler,
 		},
 	},
 	Streams:  []grpc.StreamDesc{},

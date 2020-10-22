@@ -14,6 +14,7 @@ service Test {
   rpc SetRequest (SetReq) returns (SetRsp) {}
   rpc DelRequest (DelReq) returns (DelRsp) {}
   rpc CrashRequest (CrashReq) returns (CrashRsp){}
+  rpc LocalRequest (LocalReq) returns (LocalRsp){}
 }
 
 message GetReq{
@@ -57,7 +58,14 @@ message DelReq{
 message DelRsp{
   string a =1;
 }
-
+message LocalReq{
+  string cmd = 1;
+  int32 cnt = 2;
+  bool naked = 3;
+}
+message LocalRsp{
+  int64 time = 1;
+}
 message CrashReq{
   Header header = 1;
 }

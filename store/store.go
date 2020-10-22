@@ -1,6 +1,7 @@
 package store
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net"
@@ -29,6 +30,40 @@ const (
 type ValueType interface{}
 type StoreType map[string]ValueType
 
+type RaftFuture struct {
+	responsed bool
+	err       chan error
+	e         error
+	rsp       interface{}
+}
+
+func (th *RaftFuture) response(err error) {
+	th.err <- err
+}
+func (th *RaftFuture) Error() error {
+	if th.responsed {
+		return th.e
+	}
+	timer := time.After(5 * time.Second)
+	select {
+	case <-timer:
+		th.e = errors.New("timeout")
+		break
+	case th.e = <-th.err:
+		break
+	}
+	th.responsed = true
+	return th.e
+}
+func (th *RaftFuture) Response() interface{} {
+	if !th.responsed {
+		return nil
+	}
+	return th.rsp
+}
+func (th *RaftFuture) Index() uint64 {
+	return 0
+}
 func (th *StoreType) copyFrom(v StoreType) {
 	for k, v := range v {
 		(*th)[k] = v
@@ -83,6 +118,8 @@ type RaftStore struct {
 
 	statTicker *common.Ticker
 	stopped    bool
+
+	runLogic common.LogicChan
 }
 
 func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoFunc) *RaftStore {
@@ -94,6 +131,40 @@ func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoF
 		goFunc:   goFunc,
 		exitChan: make(chan struct{}, 1),
 		stopped:  false,
+	}
+}
+func (th *RaftStore) runApply() {
+	th.runLogic.Init(th.config.RunChanNum, th.goFunc)
+	th.goFunc.Go(func() {
+		th.runLogic.Start()
+	})
+}
+func (th *RaftStore) applyRun(key string, cmd *inner.ApplyCmd) raft.ApplyFuture {
+	if th.config.DebugConfig.RaftApplyHash {
+		hash := common.GetStringSum(key)
+		rsp := &RaftFuture{
+			err: make(chan error),
+		}
+		if th.runLogic.CanGo() {
+			th.runLogic.Handle(hash, 5*time.Second, func(err error) {
+				if err == nil {
+					f := th.apply(cmd)
+					if err := f.Error(); err != nil {
+						rsp.response(err)
+					} else {
+						rsp.rsp = f.Response()
+						rsp.response(nil)
+					}
+				} else {
+					rsp.response(err)
+				}
+			})
+		} else {
+			go rsp.response(fmt.Errorf("node are stopping"))
+		}
+		return rsp
+	} else {
+		return th.apply(cmd)
 	}
 }
 func (th *RaftStore) apply(cmd *inner.ApplyCmd) raft.ApplyFuture {
@@ -128,14 +199,27 @@ func (th *RaftStore) Set(key string, value ValueType) raft.ApplyFuture {
 		Cmd: inner.ApplyCmd_SET,
 		Obj: &inner.ApplyCmd_Set{Set: &inner.ApplyCmd_OpSet{Key: key, Value: v}},
 	}
+	return th.applyRun(key, cmd)
+}
+
+func (th *RaftStore) SetTest(key string, value ValueType) raft.ApplyFuture {
+	v, e := common.Encode(value)
+	if e != nil {
+		return nil
+	}
+	cmd := &inner.ApplyCmd{
+		Cmd: inner.ApplyCmd_SET,
+		Obj: &inner.ApplyCmd_Set{Set: &inner.ApplyCmd_OpSet{Key: key, Value: v}},
+	}
 	return th.apply(cmd)
 }
+
 func (th *RaftStore) Delete(key string) raft.ApplyFuture {
 	cmd := &inner.ApplyCmd{
 		Cmd: inner.ApplyCmd_DEL,
 		Obj: &inner.ApplyCmd_Del{Del: &inner.ApplyCmd_OpDel{Key: key}},
 	}
-	return th.apply(cmd)
+	return th.applyRun(key, cmd)
 }
 
 //get real-time data
@@ -335,6 +419,7 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	}
 	th.raft = ra
 	th.runObserver()
+	th.runApply()
 	return nil
 }
 func (th *RaftStore) clearStoreCache() {
@@ -443,6 +528,7 @@ func (th *RaftStore) Shutdown() {
 	}
 	th.stopped = true
 	if th.raft != nil {
+		th.runLogic.Stop()
 		th.transport.Close()
 		f := th.raft.Shutdown()
 		if e := f.Error(); e != nil {
