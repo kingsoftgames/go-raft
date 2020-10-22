@@ -292,9 +292,8 @@ func (th *MainApp) initDebugConfig() {
 			_cnt, _totalTime := th.runLogic.GetCnt()
 			if cnt > 0 {
 				__cnt := _cnt - cnt
-				__totalTime := _totalTime - totalTime
 				__t := _t - t
-				logrus.Infof("[%s]LastTerm %dms,cnt %d,totalTime %dms, qps %v/s,", th.config.NodeId, __t/1e6, __cnt, __totalTime/1e3, __cnt/(__totalTime/1e6))
+				logrus.Infof("[%s]LastTerm %dms,cnt %d,", th.config.NodeId, __t/1e6, __cnt)
 			}
 			cnt, totalTime, t = _cnt, _totalTime, _t
 		})
