@@ -24,6 +24,8 @@ type LogConfigure struct {
 type DebugConfigure struct {
 	TraceLine       bool `yaml:"trace_line"`
 	PrintIntervalMs int  `yaml:"print_interval_ms"`
+	GRpcHandleHash  bool `yaml:"grpc_handle_hash"`
+	RaftApplyHash   bool `yaml:"raft_apply_hash"`
 }
 
 func NewDefaultLogConfigure() *LogConfigure {
@@ -35,7 +37,9 @@ func NewDefaultLogConfigure() *LogConfigure {
 }
 func NewDefaultDebugConfigure() *DebugConfigure {
 	return &DebugConfigure{
-		TraceLine: false,
+		TraceLine:      false,
+		GRpcHandleHash: true,
+		RaftApplyHash:  false,
 	}
 }
 
@@ -61,6 +65,7 @@ type Configure struct {
 	HealthCheckIntervalMs int             `yaml:"health_check_interval_ms"`
 	CleanDeadServers      bool            `yaml:"cleanup_dead_servers"`
 	DebugConfig           *DebugConfigure `yaml:"debug_config"`
+	RunChanNum            int             `yaml:"run_chan_num"`
 }
 
 func NewDefaultConfigure() *Configure {
@@ -81,10 +86,11 @@ func NewDefaultConfigure() *Configure {
 		ConnectTimeoutMs:      100,
 		Bootstrap:             true,
 		BootstrapExpect:       0,
-		Ver:                   "v1.0",
+		Ver:                   "v2.0",
 		HealthCheckIntervalMs: 200,
 		CleanDeadServers:      true,
 		DebugConfig:           NewDefaultDebugConfigure(),
+		RunChanNum:            100,
 	}
 	trim(config)
 	return config
@@ -171,6 +177,7 @@ var bootstrapExpect *int
 var logCacheCapacity *int
 var healthCheckIntervalMs *int
 var cleanDeadServers *bool
+var runChanNum *int
 
 var crash *bool
 var crashNotify *string
@@ -227,6 +234,8 @@ func trimConfigureFromFlag(config *Configure) {
 			config.CleanDeadServers = *cleanDeadServers
 		case "health_check_interval_ms":
 			config.HealthCheckIntervalMs = *healthCheckIntervalMs
+		case "run_chan_num":
+			config.RunChanNum = *runChanNum
 		}
 	})
 }
@@ -253,4 +262,5 @@ func init() {
 	ver = flag.String("ver", "", "app version")
 	healthCheckIntervalMs = flag.Int("health_check_interval_ms", 200, "interval ms for health")
 	cleanDeadServers = flag.Bool("cleanup_dead_servers", true, "whether clean dead nodes when over health check time")
+	runChanNum = flag.Int("run_chan_num", 0, "run chan num")
 }

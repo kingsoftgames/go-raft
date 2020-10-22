@@ -38,7 +38,7 @@ func (th *LogicChan) Init(maxChan int, goFunc GoFunc) {
 	th.exitChan = make(chan struct{})
 	th.qps = make([]QPS, maxChan)
 	for i := 0; i < len(th.runChan); i++ {
-		th.runChan[i] = make(RunChanType, 4096)
+		th.runChan[i] = make(RunChanType)
 	}
 	th.UpdateExitWait(&GracefulExit{})
 }
@@ -48,10 +48,13 @@ func (th *LogicChan) Get() RunChanType {
 func (th *LogicChan) HandleNoHash(timeout time.Duration, h func(err error)) {
 	th.Handle(0, timeout, h)
 }
-func (th *LogicChan) HandleWithHash(hash string, timeout time.Duration, h func(err error)) {
+func GetStringSum(hash string) int {
 	hs := fnv.New32()
 	_, _ = hs.Write([]byte(hash))
-	th.Handle(int(hs.Sum32()), timeout, h)
+	return int(hs.Sum32())
+}
+func (th *LogicChan) HandleWithHash(hash string, timeout time.Duration, h func(err error)) {
+	th.Handle(GetStringSum(hash), timeout, h)
 }
 func (th *LogicChan) Handle(hash int, timeout time.Duration, h func(err error)) {
 	if th.runChan == nil {
@@ -65,7 +68,7 @@ func (th *LogicChan) Handle(hash int, timeout time.Duration, h func(err error)) 
 		timer = time.After(timeout)
 	}
 	i := hash % len(th.runChan)
-	th.Go(func() {
+	go func() {
 		select {
 		case <-timer:
 			h(ErrTimeout)
@@ -73,7 +76,7 @@ func (th *LogicChan) Handle(hash int, timeout time.Duration, h func(err error)) 
 		case <-th.exitChan:
 			h(ErrShutdown)
 		}
-	})
+	}()
 }
 func (th *LogicChan) Start() {
 	defer func() {
@@ -83,8 +86,10 @@ func (th *LogicChan) Start() {
 	for i := 0; i < len(th.runChan); i++ {
 		w.Add(1)
 		th.goFunc.GoN(func(p ...interface{}) {
+			//goid := GoID()
 			idx := p[0].(int)
 			defer func() {
+				logrus.Info("Close LogicChan")
 				close(th.runChan[idx])
 				w.Done()
 			}()
@@ -98,9 +103,6 @@ func (th *LogicChan) Start() {
 						atomic.AddInt64(&th.qps[idx].Cnt, 1)
 					}
 					deal(f)
-					if len(th.runChan[idx]) > 0 {
-						break
-					}
 				case <-th.exitChan:
 					logrus.Debugf("idx(%d) exit", idx)
 					return

@@ -41,7 +41,7 @@ func (th *TraceFutureInfo) AddTimeLine(tag string) {
 	if th.Timeline == nil {
 		th.Timeline = make([]TimelineInfo, 0)
 	}
-	th.Timeline = append(th.Timeline, TimelineInfo{Tag: tag, T: time.Now().UnixNano() / 1e3})
+	th.Timeline = append(th.Timeline, TimelineInfo{Tag: tag, T: time.Now().UnixNano()})
 }
 func (th *TraceFutureInfo) AddTimelineObj(info TimelineInfo) {
 	if !DebugTraceFutureLine {

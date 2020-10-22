@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"math/rand"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -183,7 +182,7 @@ func (th *MainApp) Init(configPath string) int {
 		return -2
 	}
 	th.Name = th.config.NodeId
-	th.runLogic.Init(runtime.NumCPU()-1, th)
+	th.runLogic.Init(th.config.RunChanNum, th)
 	th.innerLogic.Init(1, th)
 	th.config.StoreDir = filepath.Join(th.config.StoreDir, th.config.NodeId)
 	th.store = store.New(th.config, nil, th)
@@ -257,7 +256,7 @@ func (th *MainApp) Init(configPath string) int {
 		return -4
 	}
 	th.inner.SetHealth(true)
-	th.WaitGo()
+	//th.WaitGo()
 
 	th.api = New(th.config.GrpcApiAddr, th.store, th, "api")
 	th.app.Register(th.api.GetGrpcServer())
@@ -266,7 +265,7 @@ func (th *MainApp) Init(configPath string) int {
 		return -5
 	}
 	th.api.SetHealth(false)
-	th.WaitGo()
+	//th.WaitGo()
 	th.Go(th.runOtherRequest)
 	th.WaitGo()
 
@@ -320,25 +319,71 @@ func (th *MainApp) PrintQPS() {
 func (th *MainApp) Stopped() {
 	th.stopWait.Wait()
 }
-func (th *MainApp) GRpcHandle(f *ReplyFuture) {
+func (th *MainApp) GRpcHandlePrioritize(f *ReplyFuture) {
+	f.prioritized = true
 	th.Go(func() {
+		th.GRpcHandle(f)
+	})
+}
+func (th *MainApp) GRpcHandle(f *ReplyFuture) {
+	if !th.config.DebugConfig.GRpcHandleHash {
 		f.AddTimeLine("GRpcHandle")
 		f.cnt++
 		switch f.cmd {
 		case FutureCmdTypeGRpc:
 			if f.prioritized {
-				th.grpcPrioritizedChan <- f
+				th.Go(func() {
+					th.grpcPrioritizedChan <- f
+				})
 			} else {
-				th.grpcChan <- f
+				//
+				switch th.store.GetRaft().State() {
+				case raft.Leader:
+					th.leaderGRpc(f)
+				case raft.Follower:
+					if con := th.inner.GetInner(); con != nil {
+						th.followerGRpc(f, con)
+					} else {
+						th.GRpcHandlePrioritize(f)
+					}
+				case raft.Candidate:
+					th.GRpcHandlePrioritize(f)
+				case raft.Shutdown:
+					if con := th.inner.GetLastInner(); con != nil {
+						th.followerGRpc(f, con)
+					} else {
+						f.response(errors.New("shutdown"))
+					}
+				}
 			}
 		default:
-			if f.cnt > 1 {
-				time.Sleep(time.Duration(f.cnt) * 5 * time.Millisecond)
-			}
-			th.otherChan <- f
+			th.Go(func() {
+				if f.cnt > 1 {
+					time.Sleep(time.Duration(f.cnt) * 5 * time.Millisecond)
+				}
+				th.otherChan <- f
+			})
 		}
+	} else {
+		th.Go(func() {
+			f.AddTimeLine("GRpcHandle")
+			f.cnt++
+			switch f.cmd {
+			case FutureCmdTypeGRpc:
+				if f.prioritized {
+					th.grpcPrioritizedChan <- f
+				} else {
+					th.grpcChan <- f
+				}
+			default:
+				if f.cnt > 1 {
+					time.Sleep(time.Duration(f.cnt) * 5 * time.Millisecond)
+				}
+				th.otherChan <- f
+			}
 
-	})
+		})
+	}
 }
 func (th *MainApp) updateLeaderClient(con *InnerCon) {
 	th.inner.UpdateClient(con)
@@ -838,12 +883,6 @@ func (th *MainApp) removeMember(nodeId string) error {
 }
 
 func (th *MainApp) leaderGRpc(f *ReplyFuture) {
-	t := time.Now().UnixNano()
-	defer func() {
-		if dif := time.Now().UnixNano() - t; dif > 1e9 {
-			logrus.Errorf("[%s]leaderGRpc[%v]", th.config.NodeId, dif)
-		}
-	}()
 	f.AddTimeLine("leaderGRpc")
 	if f.prioritized {
 		logrus.Warnf("[%s]leaderGRpc,%v", th.config.NodeId, f.req)
@@ -855,9 +894,8 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 			return
 		}
 		f.AddTimeLine("leaderGRpcHandle")
-		r := rand.Int63()
 		if f.prioritized {
-			logrus.Warnf("[%s]leaderGRpc,%d,%v", th.config.NodeId, r, f.req)
+			logrus.Warnf("[%s]leaderGRpc,%v", th.config.NodeId, f.req)
 		}
 		message := f.req.(protoreflect.ProtoMessage)
 		method := common.GetHandleFunctionName(message)
@@ -876,7 +914,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 					err == raft.ErrLeadershipTransferInProgress ||
 					err == raft.ErrEnqueueTimeout ||
 					err == raft.ErrNotLeader { //
-					logrus.Warnf("[%s]ApplyLog warn,%s,%d,%v", th.config.NodeId, err.Error(), r, f.req)
+					logrus.Warnf("[%s]ApplyLog warn,%s,%v", th.config.NodeId, err.Error(), f.req)
 					if f.trans {
 						logrus.Warnf("[%s]leaderGRpc trans back,%v", th.config.NodeId, f.req)
 						f.response(errTransfer)
@@ -884,8 +922,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 					}
 					//Back to grpc chan
 					f.rspFuture.Clear()
-					f.prioritized = true
-					th.GRpcHandle(f)
+					th.GRpcHandlePrioritize(f)
 					return
 				} else {
 					logrus.Errorf("[%s]ApplyLog error,%s", th.config.NodeId, err.Error())
@@ -893,7 +930,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 				f.response(err)
 			} else {
 				if f.prioritized {
-					logrus.Warnf("[%s]leaderGRpc result,%d,%v", th.config.NodeId, r, f.req)
+					logrus.Warnf("[%s]leaderGRpc result,%v", th.config.NodeId, f.req)
 				}
 				f.AddTimeLine("Response")
 				f.response(nil)
@@ -932,7 +969,7 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 	}
 
 	if th.store.GetRaft().State() == raft.Leader {
-		th.GRpcHandle(f)
+		th.GRpcHandlePrioritize(f)
 		return
 	}
 	req := &inner.TransGrpcReq{
@@ -973,8 +1010,7 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 				logrus.Warnf("[%s]followerGRpc back,%v", th.config.NodeId, f.req)
 				//Back to grpc chan
 				f.rspFuture.Clear()
-				f.prioritized = true
-				th.GRpcHandle(f)
+				th.GRpcHandlePrioritize(f)
 			} else {
 				f.response(common.Decode(rsp.Data, f.rsp))
 			}

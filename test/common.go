@@ -89,8 +89,10 @@ func singleAppTemplate(t *testing.T, clientFunc func()) {
 		if i.(raft.RaftState) == raft.Leader {
 			go func() {
 				n := time.Now().UnixNano()
+				logrus.Infof("begin,%d", n)
 				clientFunc()
-				t.Logf("singleApp %f ms", float64(time.Now().UnixNano()-n)/10e6)
+				logrus.Infof("end,%d", time.Now().UnixNano()-n)
+				t.Logf("singleApp %d ms", (time.Now().UnixNano()-n)/1e6)
 				appLeader.Stop()
 			}()
 		}
@@ -120,7 +122,7 @@ func clusterAppTemplate(t *testing.T, clientFunc func()) {
 				go func() {
 					n := time.Now().UnixNano()
 					clientFunc()
-					t.Logf("clusterAppTemplate %f ms", float64(time.Now().UnixNano()-n)/10e6)
+					t.Logf("clusterAppTemplate %f ms", float64(time.Now().UnixNano()-n)/1e6)
 					appLeader.Stop()
 					appFollower.Stop()
 				}()
@@ -159,7 +161,7 @@ func clusterApp2Template(t *testing.T, clientFunc func()) {
 					go func() {
 						n := time.Now().UnixNano()
 						clientFunc()
-						t.Logf("clusterApp2 %f ms", float64(time.Now().UnixNano()-n)/10e6)
+						t.Logf("clusterApp2 %f ms", float64(time.Now().UnixNano()-n)/1e6)
 						appLeader.Stop()
 						appFollower.Stop()
 						appFollower2.Stop()
@@ -211,6 +213,23 @@ func newTestUnit() *TestUnit {
 		C: 2,
 		D: "321",
 	}
+}
+func GRpcLocalQuery(addr string, cmd string, cnt int, naked bool, timeout time.Duration) bool {
+	addrs := strings.Split(addr, ",")
+	addr = addrs[rand.Intn(len(addrs))]
+	c := newClient(addr)
+	ctx, _ := context.WithTimeout(context.Background(), timeout)
+	rsp, e := c.Get().LocalRequest(ctx, &LocalReq{
+		Cmd:   cmd,
+		Cnt:   int32(cnt),
+		Naked: naked,
+	})
+	if e != nil {
+		logrus.Errorf("local err ,%s", e.Error())
+		return false
+	}
+	logrus.Warnf("local cnt:%d time:%d qps:%v", cnt, rsp.Time, float64(cnt)/(float64(rsp.Time)/1e9))
+	return true
 }
 
 func GRpcQuery(addr string, cmd string, key string, writeTimes int, hash bool, timeout time.Duration, printResult bool) bool {

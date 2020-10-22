@@ -26,6 +26,8 @@ var cmd *string
 var cntUnit *int
 var key *string
 var debug *bool
+var local *bool
+var naked *bool
 
 func main() {
 	flag.Parse()
@@ -50,9 +52,15 @@ func init() {
 	cmd = flag.String("cmd", "set", "cmd for query,can multi cmd split by ','")
 	key = flag.String("key", "", "key for get','")
 	debug = flag.Bool("debug", false, "whether debug for test")
+	local = flag.Bool("local", false, "local test")
+	naked = flag.Bool("naked", false, "only when local=true take affect")
 }
 func client() {
 	logrus.SetFormatter(&logrus.JSONFormatter{TimestampFormat: time.RFC3339Nano})
+	if *local {
+		test.GRpcLocalQuery(*addr, *cmd, *cnt, *naked, time.Duration(*timeout)*time.Millisecond)
+		return
+	}
 	if len(*key) > 0 {
 		keys := strings.Split(*key, ",")
 		for _, k := range keys {

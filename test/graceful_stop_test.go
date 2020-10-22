@@ -53,7 +53,7 @@ func clusterAppGracefulStop(exitWait *common.GracefulExit, t *testing.T, nodeNum
 	go once.Do(func() {
 		n := time.Now().UnixNano()
 		clientFunc()
-		t.Logf("clusterAppBootstrapExpect %f ms", float64(time.Now().UnixNano()-n)/10e6)
+		t.Logf("clusterAppBootstrapExpect %f ms", float64(time.Now().UnixNano()-n)/1e6)
 		stop()
 	})
 	exitWait.Wait()
