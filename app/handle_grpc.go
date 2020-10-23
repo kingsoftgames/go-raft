@@ -71,7 +71,10 @@ func (th *RaftServerGRpc) TransGrpcRequest(ctx context.Context, req *inner.Trans
 	logrus.Debugf("TransGrpcRequest %v", _req)
 	defer logrus.Debugf("TransGrpcRequest rsp %v", _req)
 	_rsp := reflect.New(hd.paramRsp)
-	f := NewReplyFuture(context.WithValue(ctx, "hash", req.Hash), _req.Interface(), _rsp.Interface())
+	if len(req.Hash) > 0 {
+		ctx = context.WithValue(ctx, "hash", req.Hash)
+	}
+	f := NewReplyFuture(ctx, _req.Interface(), _rsp.Interface())
 	f.prioritized = req.Prioritized
 	f.trans = true
 	f.cmd = FutureCmdTypeGRpc
