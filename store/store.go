@@ -379,8 +379,14 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 		stableStore = raft.NewInmemStore()
 		//snapshot = raft.NewInmemSnapshotStore()
 		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
+		if err != nil {
+			return err
+		}
 	} else {
 		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
+		if err != nil {
+			return err
+		}
 		if err != nil {
 			return fmt.Errorf("new snapshot store: %s", err)
 		}
