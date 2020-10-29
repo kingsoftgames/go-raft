@@ -369,26 +369,41 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	var snapshot raft.SnapshotStore
 	if th.config.StoreInMem {
 		if th.config.LogCacheCapacity > 0 {
-			if th.logStore, err = NewLogStoreCache(th.config.LogCacheCapacity, th.config.StoreDir); err != nil {
-				return fmt.Errorf("NewLogStoreCache err,%s", err)
+			//TODO 效率提升的地方，目前暂时用nomad的方法
+			//if th.logStore, err = NewLogStoreCache(th.config.LogCacheCapacity, th.config.StoreDir); err != nil {
+			//	return fmt.Errorf("NewLogStoreCache err,%s", err)
+			//}
+			//logStore = th.logStore
+			//stableStore = raft.NewInmemStore()
+			//snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
+			//if err != nil {
+			//	return err
+			//}
+			snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
+			if err != nil {
+				return fmt.Errorf("new snapshot : %s", err.Error())
 			}
-			logStore = th.logStore
+			boltDB, err := raftboltdb.NewBoltStore(filepath.Join(th.config.StoreDir, "log.db"))
+			if err != nil {
+				return fmt.Errorf("new bolt store: %s", err.Error())
+			}
+			th.raftStore = boltDB
+
+			cacheStore, err := raft.NewLogCache(th.config.LogCacheCapacity, boltDB)
+			if err != nil {
+				return err
+			}
+			logStore = cacheStore
+			stableStore = boltDB
 		} else {
 			logStore = raft.NewInmemStore()
-		}
-		stableStore = raft.NewInmemStore()
-		//snapshot = raft.NewInmemSnapshotStore()
-		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
-		if err != nil {
-			return err
+			stableStore = raft.NewInmemStore()
+			snapshot = raft.NewInmemSnapshotStore()
 		}
 	} else {
 		snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
 		if err != nil {
 			return err
-		}
-		if err != nil {
-			return fmt.Errorf("new snapshot store: %s", err)
 		}
 		boltDB, err := raftboltdb.NewBoltStore(filepath.Join(th.config.StoreDir, "log.db"))
 		if err != nil {

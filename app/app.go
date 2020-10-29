@@ -284,18 +284,18 @@ func (th *MainApp) initDebugConfig() {
 	DebugTraceFutureLine = th.config.DebugConfig.TraceLine
 	if th.config.DebugConfig.PrintIntervalMs > 0 {
 		logrus.Infof("[%s]initDebugConfig", th.config.NodeId)
-		var cnt, totalTime, t int64
+		var cnt, t int64
 		common.NewTicker(time.Duration(th.config.DebugConfig.PrintIntervalMs)*time.Millisecond, func() {
 			//logrus.Infof("[%s]%s", th.config.NodeId, GetFutureAve())
 			//th.PrintQPS()
 			_t := time.Now().UnixNano()
-			_cnt, _totalTime := th.runLogic.GetCnt()
+			_cnt, _ := th.runLogic.GetCnt()
 			if cnt > 0 {
 				__cnt := _cnt - cnt
 				__t := _t - t
 				logrus.Infof("[%s]LastTerm %dms,cnt %d,", th.config.NodeId, __t/1e6, __cnt)
 			}
-			cnt, totalTime, t = _cnt, _totalTime, _t
+			cnt, t = _cnt, _t
 		})
 	}
 }
