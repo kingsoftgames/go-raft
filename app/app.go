@@ -409,7 +409,6 @@ func (th *MainApp) Start() {
 		}()
 		th.runLogic.Start()
 	})
-	th.WaitGo()
 	th.watch.Start()
 }
 func (th *MainApp) gracefulShutdown() {
