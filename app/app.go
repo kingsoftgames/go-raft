@@ -161,10 +161,14 @@ func (th *MainApp) setWork(work bool) {
 			return
 		}
 		th.Work()
-		th.api.SetHealth(true)
+		if th.api != nil {
+			th.api.SetHealth(true)
+		}
 	} else {
 		th.Idle()
-		th.api.SetHealth(false)
+		if th.api != nil {
+			th.api.SetHealth(false)
+		}
 	}
 }
 func (th *MainApp) Init(configPath string) int {
@@ -182,8 +186,8 @@ func (th *MainApp) Init(configPath string) int {
 		return -2
 	}
 	th.Name = th.config.NodeId
-	th.runLogic.Init(th.config.RunChanNum, th)
-	th.innerLogic.Init(1, th)
+	th.runLogic.Init(th.config.RunChanNum)
+	th.innerLogic.Init(1)
 	th.config.StoreDir = filepath.Join(th.config.StoreDir, th.config.NodeId)
 	th.store = store.New(th.config, nil, th)
 	th.store.OnLeader.Add(func(i interface{}) {
@@ -256,7 +260,6 @@ func (th *MainApp) Init(configPath string) int {
 		return -4
 	}
 	th.inner.SetHealth(true)
-	//th.WaitGo()
 
 	th.api = New(th.config.GrpcApiAddr, th.store, th, "api")
 	th.app.Register(th.api.GetGrpcServer())
@@ -264,8 +267,7 @@ func (th *MainApp) Init(configPath string) int {
 		logrus.Errorf("api start err,%s", err.Error())
 		return -5
 	}
-	th.api.SetHealth(false)
-	//th.WaitGo()
+	th.api.SetHealth(th.Check())
 	th.Go(th.runOtherRequest)
 	th.WaitGo()
 
@@ -284,6 +286,7 @@ func (th *MainApp) initDebugConfig() {
 	DebugTraceFutureLine = th.config.DebugConfig.TraceLine
 	if th.config.DebugConfig.PrintIntervalMs > 0 {
 		logrus.Infof("[%s]initDebugConfig", th.config.NodeId)
+		common.OpenDebugGracefulExit()
 		var cnt, t int64
 		common.NewTicker(time.Duration(th.config.DebugConfig.PrintIntervalMs)*time.Millisecond, func() {
 			//logrus.Infof("[%s]%s", th.config.NodeId, GetFutureAve())
@@ -397,13 +400,16 @@ func (th *MainApp) Start() {
 	th.Go(func() {
 		th.innerLogic.Start()
 	})
+	th.WaitGo()
 	th.Go(th.runGRpcRequest)
+	th.WaitGo()
 	th.Go(func() {
 		defer func() {
 			th.release()
 		}()
 		th.runLogic.Start()
 	})
+	th.WaitGo()
 }
 func (th *MainApp) gracefulShutdown() {
 	if s := th.stopped.Load(); s != nil && s.(bool) {
@@ -462,6 +468,9 @@ func (th *MainApp) Stop() {
 		logrus.Errorf("[%s]GracefulStop,err,%s", th.config.NodeId, f.Error().Error())
 	}
 	logrus.Infof("[%s]Stop,end", th.config.NodeId)
+	common.NewTicker(2*time.Second, func() {
+		th.PrintGoroutineStack()
+	})
 }
 
 func (th *MainApp) GetStore() *store.RaftStore {
@@ -508,6 +517,8 @@ func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 		})
 		return
 	}
+	//need close manual
+	defer g.Close()
 	*tryCnt = 0
 	//ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs)
 	if rsp, err := g.GetClient().JoinRequest(context.Background(), &inner.JoinReq{
@@ -745,6 +756,10 @@ func (th *MainApp) trimJoinFile(file string) {
 	}
 }
 func (th *MainApp) watchJoinFile() {
+	if s := th.stopped.Load(); s != nil && s.(bool) {
+		logrus.Infof("[%s]Stopping ignore watchJoinFile", th.config.NodeId)
+		return
+	}
 	th.innerLogic.HandleNoHash(0, func(err error) {
 		if err == nil {
 			th.trimJoinFile(th.config.JoinFile)
@@ -936,7 +951,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 			}
 		}
 	}
-	if th.runLogic.CanGo() {
+	if !th.runLogic.Stopped() {
 		handleContext(&th.runLogic, f.ctx, handleTimeout, h)
 	} else {
 		f.response(fmt.Errorf("node are stopping"))

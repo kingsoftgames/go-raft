@@ -4,7 +4,6 @@ import (
 	"errors"
 	"fmt"
 	"hash/fnv"
-	"sync"
 	"sync/atomic"
 	"time"
 
@@ -26,14 +25,13 @@ type LogicChan struct {
 	runChan  []RunChanType
 	exitChan chan struct{}
 	qps      []QPS
-	goFunc   GoFunc
+	ticker   *Ticker
 }
 
-func (th *LogicChan) Init(maxChan int, goFunc GoFunc) {
+func (th *LogicChan) Init(maxChan int) {
 	if maxChan <= 0 {
 		maxChan = 1
 	}
-	th.goFunc = goFunc
 	th.runChan = make([]RunChanType, maxChan)
 	th.exitChan = make(chan struct{})
 	th.qps = make([]QPS, maxChan)
@@ -57,12 +55,6 @@ func (th *LogicChan) HandleWithHash(hash string, timeout time.Duration, h func(e
 	th.Handle(GetStringSum(hash), timeout, h)
 }
 func (th *LogicChan) Handle(hash int, timeout time.Duration, h func(err error)) {
-	if th.runChan == nil {
-		th.goFunc.Go(func() {
-			h(nil)
-		})
-		return
-	}
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -78,20 +70,25 @@ func (th *LogicChan) Handle(hash int, timeout time.Duration, h func(err error)) 
 		}
 	}()
 }
+
+//blocked , need call by other goroutine
 func (th *LogicChan) Start() {
+	logrus.Infof("LogicChan.Start")
 	defer func() {
 		th.runChan = nil
+		logrus.Infof("LogicChan.Start finished")
+		if th.ticker != nil {
+			th.ticker.Stop()
+			th.ticker = nil
+		}
 	}()
-	var w sync.WaitGroup
 	for i := 0; i < len(th.runChan); i++ {
-		w.Add(1)
-		th.goFunc.GoN(func(p ...interface{}) {
+		th.GoN(func(p ...interface{}) {
 			//goid := GoID()
 			idx := p[0].(int)
 			defer func() {
-				logrus.Info("Close LogicChan")
+				logrus.Infof("Close LogicChan(%d)", idx)
 				close(th.runChan[idx])
-				w.Done()
 			}()
 			for {
 				select {
@@ -104,17 +101,21 @@ func (th *LogicChan) Start() {
 					}
 					deal(f)
 				case <-th.exitChan:
-					logrus.Debugf("idx(%d) exit", idx)
 					return
 				}
 			}
 		}, i)
 	}
-	w.Wait()
+	th.Wait()
+}
+func (th *LogicChan) Stopped() bool {
+	return th.ticker != nil
 }
 func (th *LogicChan) Stop() {
-	th.Wait()
 	close(th.exitChan)
+	th.ticker = NewTicker(2*time.Second, func() {
+		th.exitWait.Print()
+	})
 }
 func (th *LogicChan) GetQPS() []string {
 	info := make([]string, len(th.qps)+1)

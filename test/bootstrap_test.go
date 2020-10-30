@@ -111,7 +111,7 @@ func clusterAppBootstrapExpectJoinFile(t *testing.T, nodeNum int, clientFunc fun
 				a.Stop()
 			}
 		}
-		exitWait.Done("")
+		exitWait.Done(1, "")
 	}
 	var once sync.Once
 	deal := func(i interface{}) {
@@ -139,7 +139,7 @@ func clusterAppBootstrapExpectJoinFile(t *testing.T, nodeNum int, clientFunc fun
 			}
 		}
 	}()
-	exitWait.Add("")
+	exitWait.Add(1, "")
 	for i := 0; i < nodeNum; i++ {
 		go func(i int) {
 			time.Sleep(time.Duration(rand.Intn(nodeNum*1000)) * time.Millisecond)
