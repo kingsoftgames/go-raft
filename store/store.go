@@ -134,7 +134,7 @@ func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoF
 	}
 }
 func (th *RaftStore) runApply() {
-	th.runLogic.Init(th.config.RunChanNum, th.goFunc)
+	th.runLogic.Init(th.config.RunChanNum)
 	th.goFunc.Go(func() {
 		th.runLogic.Start()
 	})
@@ -145,7 +145,7 @@ func (th *RaftStore) applyRun(key string, cmd *inner.ApplyCmd) raft.ApplyFuture 
 		rsp := &RaftFuture{
 			err: make(chan error),
 		}
-		if th.runLogic.CanGo() {
+		if !th.runLogic.Stopped() {
 			th.runLogic.Handle(hash, 5*time.Second, func(err error) {
 				if err == nil {
 					f := th.apply(cmd)

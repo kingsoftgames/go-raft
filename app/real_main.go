@@ -29,6 +29,7 @@ func (th *RealMain) run() {
 		flag.Usage()
 		os.Exit(0)
 	}
+	logrus.SetOutput(os.Stdout)
 	logrus.Infof("RealMain.Run")
 	appV := make([]IApp, 0)
 	var configV []string = make([]string, 0)

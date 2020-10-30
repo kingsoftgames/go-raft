@@ -78,7 +78,8 @@ func GetFrame(skipFrames int) runtime.Frame {
 }
 
 type GracefulExit struct {
-	w sync.WaitGroup
+	w      sync.WaitGroup
+	stacks sync.Map
 }
 
 var debugGracefulExit atomic.Value
@@ -99,20 +100,28 @@ func isDebug() bool {
 	}
 	return false
 }
-func (th *GracefulExit) Add(stack string) {
+func (th *GracefulExit) Add(key int, stack string) {
 	if isDebug() {
-		logrus.Debugf("GracefulExit Add(%s)", stack)
+		th.stacks.Store(key, stack)
 	}
 	th.w.Add(1)
 }
-func (th *GracefulExit) Done(stack string) {
+func (th *GracefulExit) Done(key int, stack string) {
 	if isDebug() {
-		logrus.Debugf("GracefulExit Done(%s)", stack)
+		th.stacks.Delete(key)
 	}
 	th.w.Done()
 }
 func (th *GracefulExit) Wait() {
 	th.w.Wait()
+}
+func (th *GracefulExit) Print() {
+	if isDebug() {
+		th.stacks.Range(func(key, value interface{}) bool {
+			logrus.Debugf("GracefulExit.Print,%v,%v", key, value)
+			return true
+		})
+	}
 }
 
 // monitor go create and destroy
@@ -134,11 +143,12 @@ func (th *DefaultGoFunc) GoN(fn func(p ...interface{}), p ...interface{}) {
 type GracefulGoFunc struct {
 	exitWait *GracefulExit
 
-	stopGo atomic.Value
-	waitGo sync.WaitGroup
+	stopGo   atomic.Value
+	waitGo   sync.WaitGroup
+	waitTest int32
 }
 
-func (th *GracefulGoFunc) CanGo() bool {
+func (th *GracefulGoFunc) canGo() bool {
 	stop := th.stopGo.Load()
 	if stop != nil {
 		return !stop.(bool)
@@ -171,47 +181,68 @@ func Recover() {
 	}
 }
 func (th *GracefulGoFunc) Go(fn func()) {
-	if !th.CanGo() {
+	if atomic.LoadInt32(&th.waitTest) == 1 {
+		//maybe error "WaitGroup is reused before previous Wait has returned"
+		logrus.Errorf("Go,WaitGo,%s", getStack())
+	}
+	if !th.canGo() {
+		logrus.Errorf("Go,Wait,%s", getStack())
 		return
 	}
 	stack := GetStack(7)
-	th.exitWait.Add(stack)
+	r := rand.Int()
+	th.exitWait.Add(r, stack)
 	th.waitGo.Add(1)
 	go func() {
-		defer Recover()
 		th.waitGo.Done()
-		defer th.exitWait.Done(stack)
+		defer func() {
+			th.exitWait.Done(r, stack)
+			Recover()
+		}()
 		fn()
 	}()
 }
 func (th *GracefulGoFunc) GoN(fn func(p ...interface{}), p ...interface{}) {
-	if !th.CanGo() {
+	if atomic.LoadInt32(&th.waitTest) == 1 {
+		//maybe error "WaitGroup is reused before previous Wait has returned"
+		logrus.Errorf("GoN,WaitGo,%s", getStack())
+	}
+	if !th.canGo() {
+		logrus.Errorf("GoN,Wait,%s", getStack())
 		return
 	}
 	stack := GetStack(7)
-	th.exitWait.Add(stack)
+	r := rand.Int()
+	th.exitWait.Add(r, stack)
 	th.waitGo.Add(1)
 	go func() {
-		defer Recover()
 		th.waitGo.Done()
-		defer th.exitWait.Done(stack)
+		defer func() {
+			th.exitWait.Done(r, stack)
+			Recover()
+		}()
 		fn(p...)
 	}()
 }
 
 //make sure all go running
 func (th *GracefulGoFunc) WaitGo() {
+	atomic.StoreInt32(&th.waitTest, 1)
 	th.waitGo.Wait()
+	atomic.StoreInt32(&th.waitTest, 0)
 }
 func (th *GracefulGoFunc) Add() {
-	th.exitWait.Add(GetStack(7))
+	th.exitWait.Add(1, GetStack(7))
 }
 func (th *GracefulGoFunc) Done() {
-	th.exitWait.Done(GetStack(7))
+	th.exitWait.Done(1, GetStack(7))
 }
 func (th *GracefulGoFunc) Wait() {
 	th.stopGo.Store(true)
 	th.exitWait.Wait()
+}
+func (th *GracefulGoFunc) PrintGoroutineStack() {
+	th.exitWait.Print()
 }
 
 func GoID() int {

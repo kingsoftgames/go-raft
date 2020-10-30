@@ -129,6 +129,10 @@ func (th *GRpcService) Start() error {
 		return err
 	}
 	th.ln = ln
+	//register health
+	th.health = health.NewServer()
+	healthgrpc.RegisterHealthServer(th.GetGrpcServer(), th.health)
+
 	th.goFunc.Go(func() {
 		logrus.Infof("[%s.%s]grpc server %s start", th.mainApp.config.NodeId, th.tag, th.addr)
 		if err := th.server.Serve(th.ln); err != nil {
@@ -136,10 +140,6 @@ func (th *GRpcService) Start() error {
 		}
 		logrus.Infof("[%s.%s]grpc server %s closed", th.mainApp.config.NodeId, th.tag, th.addr)
 	})
-
-	//register health
-	th.health = health.NewServer()
-	healthgrpc.RegisterHealthServer(th.GetGrpcServer(), th.health)
 	return nil
 }
 func (th *GRpcService) UpdateClient(client *InnerCon) {
