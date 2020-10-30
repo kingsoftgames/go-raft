@@ -410,6 +410,7 @@ func (th *MainApp) Start() {
 		th.runLogic.Start()
 	})
 	th.WaitGo()
+	th.watch.Start()
 }
 func (th *MainApp) gracefulShutdown() {
 	if s := th.stopped.Load(); s != nil && s.(bool) {
@@ -774,7 +775,6 @@ func (th *MainApp) watchJoinFile() {
 			})
 		})
 	}
-	th.watch.Start()
 }
 
 func (th *MainApp) checkUpdate() {
