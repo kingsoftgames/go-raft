@@ -400,9 +400,7 @@ func (th *MainApp) Start() {
 	th.Go(func() {
 		th.innerLogic.Start()
 	})
-	th.WaitGo()
 	th.Go(th.runGRpcRequest)
-	th.WaitGo()
 	th.Go(func() {
 		defer func() {
 			th.release()
