@@ -456,6 +456,7 @@ func (th *MainApp) shutdown() {
 func (th *MainApp) preStop() {
 	th.Idle()
 	th.api.SetHealth(false)
+	th.collector.Stop()
 	th.stopUpdateTime()
 	th.stopHealthTicker()
 	th.watch.Stop()

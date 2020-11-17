@@ -102,6 +102,7 @@ func (th *PromCollector) Init(host interface{}, goFunc GoFunc, config *Prometheu
 	return nil
 }
 func (th *PromCollector) Stop() {
+	th.Idle()
 	if th.server != nil {
 		th.server.Close()
 	}
