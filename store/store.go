@@ -133,6 +133,11 @@ func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoF
 		stopped:  false,
 	}
 }
+func (th *RaftStore) GetMSize() int {
+	th.l.RLock()
+	defer th.l.RUnlock()
+	return len(th.m)
+}
 func (th *RaftStore) runApply() {
 	th.runLogic.Init(th.config.RunChanNum)
 	th.goFunc.Go(func() {

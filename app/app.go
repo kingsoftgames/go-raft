@@ -125,6 +125,9 @@ type MainApp struct {
 	sig                 chan struct{}
 
 	debug atomic.Value
+
+	collector common.PromCollector
+	queryCnt  uint64
 }
 
 func NewMainApp(app IApp, exitWait *common.GracefulExit) *MainApp {
@@ -153,6 +156,12 @@ func (th *MainApp) checkCfg() bool {
 		return false
 	}
 	return true
+}
+func (th *MainApp) GetApp() IApp {
+	return th.app
+}
+func (th *MainApp) getNS() string {
+	return strings.Trim(reflect.TypeOf(th.app).Elem().Name(), "App")
 }
 func (th *MainApp) setWork(work bool) {
 	if work {
@@ -195,8 +204,10 @@ func (th *MainApp) Init(configPath string) int {
 			th.startUpdateTime()
 			th.onChgToLeader()
 			th.updateLeaderClient(nil)
+			th.collector.Work()
 		} else {
 			th.stopUpdateTime()
+			th.collector.Idle()
 		}
 		th.app.OnLeader(i.(bool))
 	})
@@ -279,6 +290,8 @@ func (th *MainApp) Init(configPath string) int {
 	th.healthTicker()
 	th.watchJoinFile()
 	th.Work()
+	th.config.Prometheus.Namespace = th.getNS()
+	th.collector.Init(th, th, th.config.Prometheus)
 	logrus.Infof("[%s]Init finished[%s][%d]", th.config.NodeId, VER, os.Getpid())
 	return 0
 }
@@ -908,6 +921,7 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 		if f.prioritized {
 			logrus.Warnf("[%s]leaderGRpc,%v", th.config.NodeId, f.req)
 		}
+		atomic.AddUint64(&th.queryCnt, 1)
 		message := f.req.(protoreflect.ProtoMessage)
 		method := common.GetHandleFunctionName(message)
 		if _, err := th.handler.Handle(method, []reflect.Value{reflect.ValueOf(th.app), reflect.ValueOf(f.req), reflect.ValueOf(f.rsp), reflect.ValueOf(&f.rspFuture)}); err != nil {

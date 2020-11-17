@@ -27,6 +27,19 @@ type DebugConfigure struct {
 	GRpcHandleHash  bool `yaml:"grpc_handle_hash"`
 	RaftApplyHash   bool `yaml:"raft_apply_hash"`
 }
+type PrometheusConfigure struct {
+	Addr                   string `yaml:"addr"`
+	IncludeExporterMetrics bool   `yaml:"include_exporter_metrics"`
+	Namespace              string `yaml:"namespace"`
+}
+
+func NewDefaultPrometheusConfigure() *PrometheusConfigure {
+	return &PrometheusConfigure{
+		Addr:                   "",
+		IncludeExporterMetrics: false,
+		Namespace:              "",
+	}
+}
 
 func NewDefaultLogConfigure() *LogConfigure {
 	return &LogConfigure{
@@ -44,28 +57,29 @@ func NewDefaultDebugConfigure() *DebugConfigure {
 }
 
 type Configure struct {
-	RaftAddr              string          `yaml:"raft_addr"`
-	GrpcApiAddr           string          `yaml:"grpc_addr"`
-	HttpApiAddr           string          `yaml:"http_addr"`
-	InnerAddr             string          `yaml:"inner_addr"`
-	StoreInMem            bool            `yaml:"store_in_mem"`       //是否落地，false落地，true不落地
-	StoreDir              string          `yaml:"store_dir"`          //如果StoreInMem为true，这个参数无效
-	LogCacheCapacity      int             `yaml:"log_cache_capacity"` //如果大于0，那么logStore使用 LogStoreCache
-	Codec                 string          `yaml:"codec"`
-	LogConfig             *LogConfigure   `yaml:"log_config"`
-	PortShift             int             `yaml:"port_shift"`
-	NodeId                string          `yaml:"node_id"`
-	JoinAddr              string          `yaml:"join_addr"`
-	TryJoinTime           int             `yaml:"try_join_time"`
-	JoinFile              string          `yaml:"join_file"`
-	ConnectTimeoutMs      int             `yaml:"connect_timeout_ms"` //连接超时（毫秒）
-	Bootstrap             bool            `yaml:"bootstrap"`
-	BootstrapExpect       int             `yaml:"bootstrap_expect"`
-	Ver                   string          `yaml:"ver"`
-	HealthCheckIntervalMs int             `yaml:"health_check_interval_ms"`
-	CleanDeadServers      bool            `yaml:"cleanup_dead_servers"`
-	DebugConfig           *DebugConfigure `yaml:"debug_config"`
-	RunChanNum            int             `yaml:"run_chan_num"`
+	RaftAddr              string               `yaml:"raft_addr"`
+	GrpcApiAddr           string               `yaml:"grpc_addr"`
+	HttpApiAddr           string               `yaml:"http_addr"`
+	InnerAddr             string               `yaml:"inner_addr"`
+	StoreInMem            bool                 `yaml:"store_in_mem"`       //是否落地，false落地，true不落地
+	StoreDir              string               `yaml:"store_dir"`          //如果StoreInMem为true，这个参数无效
+	LogCacheCapacity      int                  `yaml:"log_cache_capacity"` //如果大于0，那么logStore使用 LogStoreCache
+	Codec                 string               `yaml:"codec"`
+	LogConfig             *LogConfigure        `yaml:"log_config"`
+	PortShift             int                  `yaml:"port_shift"`
+	NodeId                string               `yaml:"node_id"`
+	JoinAddr              string               `yaml:"join_addr"`
+	TryJoinTime           int                  `yaml:"try_join_time"`
+	JoinFile              string               `yaml:"join_file"`
+	ConnectTimeoutMs      int                  `yaml:"connect_timeout_ms"` //连接超时（毫秒）
+	Bootstrap             bool                 `yaml:"bootstrap"`
+	BootstrapExpect       int                  `yaml:"bootstrap_expect"`
+	Ver                   string               `yaml:"ver"`
+	HealthCheckIntervalMs int                  `yaml:"health_check_interval_ms"`
+	CleanDeadServers      bool                 `yaml:"cleanup_dead_servers"`
+	DebugConfig           *DebugConfigure      `yaml:"debug_config"`
+	RunChanNum            int                  `yaml:"run_chan_num"`
+	Prometheus            *PrometheusConfigure `yaml:"prometheus_config"`
 }
 
 func NewDefaultConfigure() *Configure {
@@ -91,6 +105,7 @@ func NewDefaultConfigure() *Configure {
 		CleanDeadServers:      true,
 		DebugConfig:           NewDefaultDebugConfigure(),
 		RunChanNum:            100,
+		Prometheus:            NewDefaultPrometheusConfigure(),
 	}
 	trim(config)
 	return config

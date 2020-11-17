@@ -1,4 +1,4 @@
-# ppx-app
+# go-raft
 基于 hashicorp/raft 一致性去中心化逻辑框架
 
 gen raft code from proto
