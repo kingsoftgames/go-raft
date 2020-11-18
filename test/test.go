@@ -21,6 +21,12 @@ type testApp struct {
 
 func (th *testApp) Init(app *app.MainApp) error {
 	th.mainApp = app
+	th.mainApp.OnKeyExpire.Add(func(i interface{}) {
+		logrus.Debugf("OnKeyExpire,%v", i)
+		if err := th.mainApp.GetStore().Delete(i.(string)).Error(); err != nil {
+			logrus.Errorf("OnKeyExpire,remove err,%s", err.Error())
+		}
+	})
 	return nil
 }
 func (th *testApp) Release() {

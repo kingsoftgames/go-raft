@@ -41,7 +41,7 @@ func NewLogStoreCache(capacity int, path string) (*LogStoreCache, error) {
 	if capacity <= 0 {
 		return nil, fmt.Errorf("capacity must be positive")
 	}
-	if err := os.MkdirAll(path, os.ModePerm); err != nil && !os.IsExist(err) {
+	if err := os.MkdirAll(path, 744); err != nil && !os.IsExist(err) {
 		return nil, fmt.Errorf("logStoreCache path not accessible: %v", err)
 	}
 	btDB, err := raftboltdb.NewBoltStore(filepath.Join(path, "log.db"))

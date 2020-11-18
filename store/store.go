@@ -70,10 +70,6 @@ func (th *StoreType) copyFrom(v StoreType) {
 	}
 }
 
-func GetApiKey(raftAddr string) string {
-	return "api-" + raftAddr
-}
-
 type raftServers []raft.Server
 
 func (th *raftServers) put(id, addr string) {
@@ -120,6 +116,11 @@ type RaftStore struct {
 	stopped    bool
 
 	runLogic common.LogicChan
+
+	expireKey    map[string]int64
+	expireTimer  *common.Timer
+	OnKeysExpire common.SafeEvent
+	keyChan      chan *expireKey
 }
 
 func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoFunc) *RaftStore {
@@ -138,6 +139,74 @@ func (th *RaftStore) GetMSize() int {
 	defer th.l.RUnlock()
 	return len(th.m)
 }
+
+type expireKey struct {
+	k string
+	r bool
+}
+
+func (th *RaftStore) runExpire() {
+	if th.config.KeyExpire == 0 {
+		return
+	}
+	th.expireKey = map[string]int64{}
+	th.keyChan = make(chan *expireKey)
+	timerChan := make(chan struct{})
+	ticker := common.NewTicker(time.Second, func() {
+		timerChan <- struct{}{}
+	})
+	now := time.Now().Unix()
+	th.goFunc.Go(func() {
+		defer ticker.Stop()
+		var cnt uint64
+		for {
+			select {
+			case key := <-th.keyChan:
+				if key == nil {
+					logrus.Infof("[%s]runExpire finished", th.config.NodeId)
+					return
+				}
+				if key.r {
+					delete(th.expireKey, key.k)
+				} else {
+					th.expireKey[key.k] = now
+				}
+			case <-timerChan:
+				now = time.Now().Unix()
+				cnt++
+				if cnt%uint64(th.config.KeyExpire) == 0 {
+					if th.IsLeader() {
+						expireKeys := make([]string, 0)
+						for k, t := range th.expireKey {
+							if now-t > int64(th.config.KeyExpire) {
+								expireKeys = append(expireKeys, k)
+							}
+						}
+						if len(expireKeys) > 0 {
+							th.goFunc.GoN(func(p ...interface{}) {
+								th.OnKeysExpire.Emit(p[0])
+							}, expireKeys)
+						}
+					}
+				}
+			}
+		}
+	})
+}
+func (th *RaftStore) closeExpire() {
+	if th.keyChan != nil {
+		close(th.keyChan)
+		th.keyChan = nil
+	}
+}
+func (th *RaftStore) liveKey(key string, remove bool) {
+	th.goFunc.Go(func() {
+		th.keyChan <- &expireKey{
+			k: key,
+			r: remove,
+		}
+	})
+}
 func (th *RaftStore) runApply() {
 	th.runLogic.Init(th.config.RunChanNum)
 	th.goFunc.Go(func() {
@@ -145,6 +214,7 @@ func (th *RaftStore) runApply() {
 	})
 }
 func (th *RaftStore) applyRun(key string, cmd *inner.ApplyCmd) raft.ApplyFuture {
+	th.liveKey(key, cmd.Cmd == inner.ApplyCmd_DEL)
 	if th.config.DebugConfig.RaftApplyHash {
 		hash := common.GetStringSum(key)
 		rsp := &RaftFuture{
@@ -193,6 +263,7 @@ func (th *RaftStore) Foreach(fn func(string, ValueType)) {
 func (th *RaftStore) Get(key string) (ValueType, error) {
 	th.l.RLock()
 	defer th.l.RUnlock()
+	th.liveKey(key, false)
 	return th.m[key], nil
 }
 func (th *RaftStore) Set(key string, value ValueType) raft.ApplyFuture {
@@ -205,18 +276,6 @@ func (th *RaftStore) Set(key string, value ValueType) raft.ApplyFuture {
 		Obj: &inner.ApplyCmd_Set{Set: &inner.ApplyCmd_OpSet{Key: key, Value: v}},
 	}
 	return th.applyRun(key, cmd)
-}
-
-func (th *RaftStore) SetTest(key string, value ValueType) raft.ApplyFuture {
-	v, e := common.Encode(value)
-	if e != nil {
-		return nil
-	}
-	cmd := &inner.ApplyCmd{
-		Cmd: inner.ApplyCmd_SET,
-		Obj: &inner.ApplyCmd_Set{Set: &inner.ApplyCmd_OpSet{Key: key, Value: v}},
-	}
-	return th.apply(cmd)
 }
 
 func (th *RaftStore) Delete(key string) raft.ApplyFuture {
@@ -234,7 +293,7 @@ func (th *RaftStore) GetAsync(key string, fn func(err error, valueType ValueType
 			Cmd: inner.ApplyCmd_GET,
 			Obj: &inner.ApplyCmd_Get{Get: &inner.ApplyCmd_OpGet{Key: key}},
 		}
-		f := th.apply(cmd)
+		f := th.applyRun(key, cmd)
 		err := f.Error()
 		if th.runChan != nil {
 			th.runChan <- func() {
@@ -446,6 +505,7 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	th.raft = ra
 	th.runObserver()
 	th.runApply()
+	th.runExpire()
 	return nil
 }
 func (th *RaftStore) clearStoreCache() {
@@ -554,6 +614,7 @@ func (th *RaftStore) Shutdown() {
 	}
 	th.stopped = true
 	if th.raft != nil {
+		th.closeExpire()
 		th.runLogic.Stop()
 		th.transport.Close()
 		f := th.raft.Shutdown()

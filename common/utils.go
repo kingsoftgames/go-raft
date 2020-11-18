@@ -166,7 +166,7 @@ func getStack() string {
 func Recover() {
 	if err := recover(); err != nil {
 		logrus.Error(getStack())
-		os.MkdirAll("log/crash", os.ModePerm)
+		os.MkdirAll("log/crash", 744)
 		crashFile := fmt.Sprintf("log/crash/crash%d-%s.log", rand.Intn(10000), time.Now().Format("2006-01-02-15-04-05"))
 		ioutil.WriteFile(crashFile, []byte(getStack()), os.ModePerm)
 		if len(*crashNotify) > 0 {

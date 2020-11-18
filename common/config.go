@@ -41,6 +41,16 @@ func NewDefaultPrometheusConfigure() *PrometheusConfigure {
 	}
 }
 
+type RaftConfigure struct {
+	NodeId           string `yaml:"node_id"`
+	Addr             string `yaml:"addr"`
+	StoreInMem       bool   `yaml:"store_in_mem"`       //是否落地，false落地，true不落地
+	StoreDir         string `yaml:"store_dir"`          //如果StoreInMem为true，这个参数无效
+	LogCacheCapacity int    `yaml:"log_cache_capacity"` //如果大于0，那么logStore使用 LogStoreCache
+	Bootstrap        bool   `yaml:"bootstrap"`
+	BootstrapExpect  int    `yaml:"bootstrap_expect"`
+}
+
 func NewDefaultLogConfigure() *LogConfigure {
 	return &LogConfigure{
 		Level:   "DEBUG",
@@ -80,6 +90,7 @@ type Configure struct {
 	DebugConfig           *DebugConfigure      `yaml:"debug_config"`
 	RunChanNum            int                  `yaml:"run_chan_num"`
 	Prometheus            *PrometheusConfigure `yaml:"prometheus_config"`
+	KeyExpire             int                  `yaml:"key_expire"`
 }
 
 func NewDefaultConfigure() *Configure {
@@ -193,6 +204,7 @@ var logCacheCapacity *int
 var healthCheckIntervalMs *int
 var cleanDeadServers *bool
 var runChanNum *int
+var keyExpire *int
 
 var crash *bool
 var crashNotify *string
@@ -251,6 +263,8 @@ func trimConfigureFromFlag(config *Configure) {
 			config.HealthCheckIntervalMs = *healthCheckIntervalMs
 		case "run_chan_num":
 			config.RunChanNum = *runChanNum
+		case "key_expire":
+			config.KeyExpire = *keyExpire
 		}
 	})
 }
@@ -278,4 +292,5 @@ func init() {
 	healthCheckIntervalMs = flag.Int("health_check_interval_ms", 200, "interval ms for health")
 	cleanDeadServers = flag.Bool("cleanup_dead_servers", true, "whether clean dead nodes when over health check time")
 	runChanNum = flag.Int("run_chan_num", 0, "run chan num")
+	keyExpire = flag.Int("key_expire", 0, "key expire if idle over key_expire second")
 }

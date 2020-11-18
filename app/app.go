@@ -97,6 +97,7 @@ type MainApp struct {
 	http *httpApi
 
 	OnLeaderChg common.SafeEvent
+	OnKeyExpire common.SafeEvent
 
 	stopWait sync.WaitGroup
 
@@ -179,6 +180,21 @@ func (th *MainApp) setWork(work bool) {
 			th.api.SetHealth(false)
 		}
 	}
+}
+func (th *MainApp) startExpireKey() {
+	th.GetStore().OnKeysExpire.Add(func(i interface{}) {
+		keys := i.([]string)
+		for _, k := range keys {
+			func(k string) {
+				th.runLogic.HandleWithHash(k, handleTimeout, func(err error) {
+					if err != nil {
+						return
+					}
+					th.OnKeyExpire.Emit(k)
+				})
+			}(k)
+		}
+	})
 }
 func (th *MainApp) Init(configPath string) int {
 	th.config = common.InitConfigureFromFile(configPath)
@@ -292,6 +308,7 @@ func (th *MainApp) Init(configPath string) int {
 	th.Work()
 	th.config.Prometheus.Namespace = th.getNS()
 	th.collector.Init(th, th, th.config.Prometheus)
+	th.startExpireKey()
 	logrus.Infof("[%s]Init finished[%s][%d]", th.config.NodeId, VER, os.Getpid())
 	return 0
 }

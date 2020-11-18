@@ -87,7 +87,6 @@ func (th *LogicChan) Start() {
 			//goid := GoID()
 			idx := p[0].(int)
 			defer func() {
-				logrus.Infof("Close LogicChan(%d)", idx)
 				close(th.runChan[idx])
 			}()
 			for {
