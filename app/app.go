@@ -229,7 +229,6 @@ func (th *MainApp) InitWithArgs(configPath string, args []string) error {
 			th.startUpdateTime()
 			th.onChgToLeader()
 			th.updateLeaderClient(nil)
-			th.collector.Work()
 		} else {
 			th.stopUpdateTime()
 		}
@@ -316,6 +315,7 @@ func (th *MainApp) InitWithArgs(configPath string, args []string) error {
 		return err
 	}
 	th.startExpireKey()
+	th.collector.Work()
 	logrus.Infof("[%s]Init finished[%s][%d]", th.getNodeName(), VER, os.Getpid())
 	return nil
 }
