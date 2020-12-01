@@ -5,7 +5,6 @@ import (
 	"io/ioutil"
 	"math/rand"
 	"os"
-	"os/exec"
 	"runtime"
 	"runtime/debug"
 	"strconv"
@@ -141,6 +140,7 @@ func (th *DefaultGoFunc) GoN(fn func(p ...interface{}), p ...interface{}) {
 }
 
 type GracefulGoFunc struct {
+	alerter  *Alerter
 	exitWait *GracefulExit
 
 	stopGo   atomic.Value
@@ -158,24 +158,42 @@ func (th *GracefulGoFunc) canGo() bool {
 func (th *GracefulGoFunc) UpdateExitWait(exitWait *GracefulExit) {
 	th.exitWait = exitWait
 }
+func (th *GracefulGoFunc) ConfigAlerter(config *AlerterConfigure) {
+	th.alerter = NewAlerter(config)
+}
 func getStack() string {
 	var buf [4096]byte
 	n := runtime.Stack(buf[:], false)
 	return string(buf[:n])
 }
-func Recover() {
+
+//func Recover() {
+//	if err := recover(); err != nil {
+//		logrus.Error(getStack())
+//		os.MkdirAll("log/crash", 744)
+//		crashFile := fmt.Sprintf("log/crash/crash%d-%s.log", rand.Intn(10000), time.Now().Format("2006-01-02-15-04-05"))
+//		ioutil.WriteFile(crashFile, []byte(getStack()), os.ModePerm)
+//		if len(*crashNotify) > 0 {
+//			cmd := exec.Command(*crashNotify, crashFile)
+//			if err := cmd.Run(); err != nil {
+//				logrus.Errorf("call %s,err,%s", *crashNotify, err.Error())
+//			}
+//		}
+//		if NeedCrash() {
+//			panic(err)
+//		}
+//	}
+//}
+func (th *GracefulGoFunc) Recover() {
 	if err := recover(); err != nil {
-		logrus.Error(getStack())
-		os.MkdirAll("log/crash", os.ModePerm)
+		statck := getStack()
+		logrus.Error(statck)
+		os.MkdirAll("log/crash", 744)
 		crashFile := fmt.Sprintf("log/crash/crash%d-%s.log", rand.Intn(10000), time.Now().Format("2006-01-02-15-04-05"))
 		ioutil.WriteFile(crashFile, []byte(getStack()), os.ModePerm)
-		if len(*crashNotify) > 0 {
-			cmd := exec.Command(*crashNotify, crashFile)
-			if err := cmd.Run(); err != nil {
-				logrus.Errorf("call %s,err,%s", *crashNotify, err.Error())
-			}
-		}
-		if NeedCrash() {
+		if th.alerter != nil {
+			th.alerter.Notify("panic", statck)
+		} else {
 			panic(err)
 		}
 	}
@@ -197,7 +215,7 @@ func (th *GracefulGoFunc) Go(fn func()) {
 		th.waitGo.Done()
 		defer func() {
 			th.exitWait.Done(r, stack)
-			Recover()
+			th.Recover()
 		}()
 		fn()
 	}()
@@ -219,7 +237,7 @@ func (th *GracefulGoFunc) GoN(fn func(p ...interface{}), p ...interface{}) {
 		th.waitGo.Done()
 		defer func() {
 			th.exitWait.Done(r, stack)
-			Recover()
+			th.Recover()
 		}()
 		fn(p...)
 	}()

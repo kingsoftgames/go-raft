@@ -40,14 +40,14 @@ func clusterAppVerUpdate(exitWait *common.GracefulExit, t *testing.T, nodeNum in
 	}
 	for i := 0; i < nodeNum; i++ {
 		yaml := fmt.Sprintf("cache/node_%s_%d.yaml", ver, i)
-		genYamlBase(yaml, false, i+portshift, true, func(configure *common.Configure) {
+		genYamlBase(yaml, false, i+portshift, true, func(configure *app.Configure) {
 			configure.Ver = ver
-			configure.LogCacheCapacity = 200
+			configure.Raft.LogCacheCapacity = 200
 			if len(joinAddr) > 0 {
 				configure.JoinAddr = joinAddr
 			} else {
 				if i == 0 {
-					configure.BootstrapExpect = nodeNum
+					configure.Raft.BootstrapExpect = nodeNum
 					configure.JoinAddr = ""
 				} else {
 					configure.JoinAddr = getJoinAddr(i)
@@ -56,8 +56,8 @@ func clusterAppVerUpdate(exitWait *common.GracefulExit, t *testing.T, nodeNum in
 		})
 		appNode[i] = app.NewMainApp(app.CreateApp("test"), exitWait)
 		appNode[i].OnLeaderChg.Add(deal)
-		if rst := appNode[i].Init(yaml); rst != 0 {
-			t.Errorf("appNode%d Init error,%d", i+portshift, rst)
+		if err := appNode[i].Init(yaml); err != nil {
+			t.Errorf("appNode%d Init error,%s", i+portshift, err.Error())
 			stop()
 			return
 		}

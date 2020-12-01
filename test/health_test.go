@@ -61,15 +61,15 @@ func Test_Health(t *testing.T) {
 }
 
 func Test_Health2(t *testing.T) {
-	leaderYaml = genYamlBase(leaderYaml, false, 0, true, func(configure *common.Configure) {
-		configure.BootstrapExpect = 2
+	leaderYaml = genYamlBase(leaderYaml, false, 0, true, func(configure *app.Configure) {
+		configure.Raft.BootstrapExpect = 2
 		configure.JoinAddr = ""
 		configure.JoinFile = ""
 	})
 	var exitWait common.GracefulExit
 	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
-	if rst := appLeader.Init(leaderYaml); rst != 0 {
-		t.Errorf("appLeader Init error,%d", rst)
+	if err := appLeader.Init(leaderYaml); err != nil {
+		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
 	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)

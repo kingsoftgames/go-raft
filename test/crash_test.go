@@ -47,10 +47,10 @@ func clusterAppCrash(t *testing.T, nodeNum int, clientFunc func([]*app.MainApp))
 	}
 	for i := 0; i < nodeNum; i++ {
 		yaml := fmt.Sprintf("cache/node%d.yaml", i)
-		genYamlBase(yaml, false, i, true, func(configure *common.Configure) {
-			configure.LogCacheCapacity = logCacheCapacity
+		genYamlBase(yaml, false, i, true, func(configure *app.Configure) {
+			configure.Raft.LogCacheCapacity = logCacheCapacity
 			if i == 0 {
-				configure.BootstrapExpect = nodeNum
+				configure.Raft.BootstrapExpect = nodeNum
 				configure.JoinAddr = ""
 			} else {
 				configure.JoinAddr = getJoinAddr(i)
@@ -58,8 +58,8 @@ func clusterAppCrash(t *testing.T, nodeNum int, clientFunc func([]*app.MainApp))
 		})
 		appNode[i] = app.NewMainApp(app.CreateApp("test"), &exitWait)
 		appNode[i].OnLeaderChg.Add(deal)
-		if rst := appNode[i].Init(yaml); rst != 0 {
-			t.Errorf("appNode%d Init error,%d", i, rst)
+		if err := appNode[i].Init(yaml); err != nil {
+			t.Errorf("appNode%d Init error,%s", i, err.Error())
 			stop()
 			return
 		}
@@ -129,8 +129,8 @@ func crash(t *testing.T, node int, count int) {
 									//stop()
 								}
 							})
-							if rst := appNode[i].Init(fmt.Sprintf("cache/node%d.yaml", i)); rst != 0 {
-								t.Errorf("appNode%d Init error,%d", i, rst)
+							if err := appNode[i].Init(fmt.Sprintf("cache/node%d.yaml", i)); err != nil {
+								t.Errorf("appNode%d Init error,%s", i, err.Error())
 								stop()
 								return
 							}
@@ -150,7 +150,7 @@ func Test_CrashVoter(t *testing.T) {
 }
 
 func Test_CrashNotify(t *testing.T) {
-	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *app.Configure) {
 	})
 	notify := "cache/crash_notify.sh"
 	content := "#!/bin/bash\nmore $1"
@@ -159,7 +159,6 @@ func Test_CrashNotify(t *testing.T) {
 		content = "more %1"
 	}
 	ioutil.WriteFile(notify, []byte(content), os.ModePerm)
-	common.SetCrashConfigTest(notify)
 	singleAppTemplate(t, func() {
 		newClient("127.0.0.1:18310").Get().CrashRequest(context.Background(), &CrashReq{
 			Header: &Header{},

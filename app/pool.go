@@ -56,7 +56,7 @@ func (th *InnerCon) Get() *innerGRpcClient {
 	//common.Debugf("[%s]Get %s:%d", th.tag, f.File, f.Line)
 	common.Debugf("[%s]Get,%s", th.tag, th.addr)
 	defer atomic.AddInt32(&th.curNum, 1)
-	if len(th.clients) == 0 && int(th.allocNum) < th.maxClient {
+	if len(th.clients) == 0 && int(atomic.LoadInt32(&th.allocNum)) < th.maxClient {
 		if idx := int(atomic.AddInt32(&th.allocNum, 1)); idx <= th.maxClient {
 			common.Debugf("[%s]Get,New,%s,%d", th.tag, th.addr, idx)
 			c := NewInnerGRpcClient(th.conTimeout)
@@ -79,17 +79,17 @@ func (th *InnerCon) BackTo(c *innerGRpcClient) {
 	if th.clients == nil {
 		c.Close()
 		atomic.AddInt32(&th.allocNum, -1)
+		atomic.AddInt32(&th.curNum, -1)
+		logrus.Infof("[%s]BackTo finished,%d,%d", th.tag, atomic.LoadInt32(&th.allocNum), atomic.LoadInt32(&th.curNum))
 		return
 	}
-	atomic.AddInt32(&th.allocNum, -1)
 	defer atomic.AddInt32(&th.curNum, -1)
 	common.Debugf("[%s]BackTo,%s,%d", th.tag, th.addr, c.Idx)
-	//defer logrus.Debugf("[%s]BackTo end,%s,%d", th.tag, th.addr, c.Idx)
 	th.clients <- c
 }
 func (th *InnerCon) Close() {
-	logrus.Infof("[%s]Close,%s", th.tag, th.addr)
-	defer logrus.Infof("[%s]Close finished,%s", th.tag, th.addr)
+	logrus.Infof("[%s]Close,%s,%d,%d,%d", th.tag, th.addr, atomic.LoadInt32(&th.allocNum), atomic.LoadInt32(&th.curNum), len(th.clients))
+	defer logrus.Infof("[%s]Close finished,%s,%d,%d,%d", th.tag, th.addr, atomic.LoadInt32(&th.allocNum), atomic.LoadInt32(&th.curNum), len(th.clients))
 	th.closeLock.Lock()
 	defer func() {
 		close(th.clients)

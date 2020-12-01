@@ -19,8 +19,8 @@ func genTestClusterAppGrpcYamlFloor() {
 func clusterAppRestart(t *testing.T) {
 	var exitWait common.GracefulExit
 	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
-	if rst := appLeader.Init(leaderYaml); rst != 0 {
-		t.Errorf("appLeader Init error,%d", rst)
+	if err := appLeader.Init(leaderYaml); err != nil {
+		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
 	appLeader.GetStore().OnStateChg.Add(func(i interface{}) {
@@ -45,16 +45,16 @@ func clusterAppRestart(t *testing.T) {
 						//appFollower2.Stop()
 					}()
 				})
-				if rst := appFollower2.Init(follower2Yaml); rst != 0 {
-					t.Errorf("appFollower2 Init error,%d", rst)
+				if err := appFollower2.Init(follower2Yaml); err != nil {
+					t.Errorf("appFollower2 Init error,%s", err.Error())
 					appLeader.Stop()
 					appFollower.Stop()
 					return
 				}
 				appFollower2.Start()
 			})
-			if rst := appFollower.Init(followerYaml); rst != 0 {
-				t.Errorf("appFollower Init error,%d", rst)
+			if err := appFollower.Init(followerYaml); err != nil {
+				t.Errorf("appFollower Init error,%s", err.Error())
 				appLeader.Stop()
 				return
 			}

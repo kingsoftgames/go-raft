@@ -1,10 +1,13 @@
 package app
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io/ioutil"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -62,6 +65,7 @@ type IApp interface {
 	Release()
 	Register(server *grpc.Server)
 	OnLeader(bool)
+	Config() common.FileFlagType
 }
 
 func handleContext(runLogic *common.LogicChan, ctx context.Context, timeout time.Duration, h func(error)) {
@@ -82,7 +86,7 @@ type MainApp struct {
 	common.CheckWork
 	api    *GRpcService //out for api
 	inner  *GRpcService //inner api transfer
-	config *common.Configure
+	config Configure
 
 	store *store.RaftStore
 
@@ -97,6 +101,7 @@ type MainApp struct {
 	http *httpApi
 
 	OnLeaderChg common.SafeEvent
+	OnKeyExpire common.SafeEvent
 
 	stopWait sync.WaitGroup
 
@@ -125,12 +130,14 @@ type MainApp struct {
 	sig                 chan struct{}
 
 	debug atomic.Value
+
+	collector common.PromCollector
+	queryCnt  uint64
 }
 
 func NewMainApp(app IApp, exitWait *common.GracefulExit) *MainApp {
 	mainApp := &MainApp{
 		app:                 app,
-		config:              common.NewDefaultConfigure(),
 		grpcChan:            make(chan *ReplyFuture, 1024),
 		grpcPrioritizedChan: make(chan *ReplyFuture, 64),
 		otherChan:           make(chan *ReplyFuture, 16),
@@ -147,17 +154,22 @@ func NewMainApp(app IApp, exitWait *common.GracefulExit) *MainApp {
 	mainApp.UpdateExitWait(exitWait)
 	return mainApp
 }
-func (th *MainApp) checkCfg() bool {
-	if th.config.Bootstrap && th.config.BootstrapExpect > 0 {
-		logrus.Errorf("'bootstrap_expect > 0' and 'bootstrap = true' are mutually exclusive")
-		return false
+func (th *MainApp) checkCfg() error {
+	if th.config.Raft.Bootstrap && th.config.Raft.BootstrapExpect > 0 {
+		return fmt.Errorf("'bootstrap_expect > 0' and 'bootstrap = true' are mutually exclusive")
 	}
-	return true
+	return nil
+}
+func (th *MainApp) GetApp() IApp {
+	return th.app
+}
+func (th *MainApp) getNS() string {
+	return strings.Trim(reflect.TypeOf(th.app).Elem().Name(), "App")
 }
 func (th *MainApp) setWork(work bool) {
 	if work {
 		if s := th.stopped.Load(); s != nil && s.(bool) { //已经就让退出模式，不让重新work
-			logrus.Debugf("[%s]stopping can not set work", th.config.NodeId)
+			logrus.Debugf("[%s]stopping can not set work", th.getNodeName())
 			return
 		}
 		th.Work()
@@ -171,30 +183,53 @@ func (th *MainApp) setWork(work bool) {
 		}
 	}
 }
-func (th *MainApp) Init(configPath string) int {
-	th.config = common.InitConfigureFromFile(configPath)
-	if !th.checkCfg() {
-		return -1
+func (th *MainApp) startExpireKey() {
+	th.GetStore().OnKeysExpire.Add(func(i interface{}) {
+		keys := i.([]string)
+		for _, k := range keys {
+			func(k string) {
+				th.runLogic.HandleWithHash(k, handleTimeout, func(err error) {
+					if err != nil {
+						return
+					}
+					th.OnKeyExpire.Emit(k)
+				})
+			}(k)
+		}
+	})
+}
+func (th *MainApp) InitWithArgs(configPath string, args []string) error {
+	if len(configPath) > 0 {
+		fileInfo, _ := os.Stat(configPath)
+		if fileInfo.IsDir() {
+			configPath += fmt.Sprintf("%s.yml", th.getNS())
+		}
+		if err := common.ReadFileAndParseFlagWithArgs(configPath, &th.config, args); err != nil {
+			return err
+		}
+	}
+	if err := th.checkCfg(); err != nil {
+		return err
 	}
 	th.initDebugConfig()
-	common.InitLog(th.config.LogConfig)
+	common.InitLog(th.config.Log)
 	s, _ := json.Marshal(th.config)
 	logrus.Infof("Configure : %s", string(s))
 	common.InitCodec(th.config.Codec)
 	if err := th.app.Init(th); err != nil {
-		logrus.Errorf("app Init err,%s", err.Error())
-		return -2
+		return err
 	}
-	th.Name = th.config.NodeId
+	th.Name = th.getNodeName()
 	th.runLogic.Init(th.config.RunChanNum)
 	th.innerLogic.Init(1)
-	th.config.StoreDir = filepath.Join(th.config.StoreDir, th.config.NodeId)
-	th.store = store.New(th.config, nil, th)
+	th.config.Raft.StoreDir = filepath.Join(th.config.Raft.StoreDir, th.getNodeName())
+	th.store = store.New(th.config.Raft, nil, th)
 	th.store.OnLeader.Add(func(i interface{}) {
 		if i.(bool) {
 			th.startUpdateTime()
 			th.onChgToLeader()
 			th.updateLeaderClient(nil)
+			th.collector.Work()
 		} else {
 			th.stopUpdateTime()
 		}
@@ -205,13 +240,13 @@ func (th *MainApp) Init(configPath string) int {
 		if i != nil && len(i.(string)) > 0 {
 			//获取leader节点的连接，如果获取到了，那么设置inner的client为leader的连接
 			if m := th.members.GetByRaftAddr(i.(string)); m != nil {
-				logrus.Debugf("[%s]Leader Chg %s,%d", th.config.NodeId, i.(string), th.store.GetRaft().LastIndex())
+				logrus.Debugf("[%s]Leader Chg %s,%d", th.getNodeName(), i.(string), th.store.GetRaft().LastIndex())
 				th.updateLeaderClient(m.Con)
 				if m.Con != nil { //如果连接不为空，那么设置可以work
 					th.setWork(true)
 				} else {
 					th.setWork(false)
-					logrus.Debugf("[%s]leader not connect Work(%v) ", th.config.NodeId, th.Check())
+					logrus.Debugf("[%s]leader not connect Work(%v) ", th.getNodeName(), th.Check())
 					return
 				}
 			}
@@ -248,55 +283,72 @@ func (th *MainApp) Init(configPath string) int {
 			th.setWork(false)
 		}
 	})
-	if err := th.store.Open(th.config.LogConfig.Level, common.NewFileLog(th.config.LogConfig, th.config.NodeId, "raft")); err != nil {
-		logrus.Errorf("store open err,%s", err.Error())
-		return -3
+	if err := th.store.Open(th.config.Log.Level, common.NewFileLog(th.config.Log, th.getNodeName(), "raft")); err != nil {
+		return err
 	}
 	th.joinSelf()
 	th.inner = New(th.config.InnerAddr, th.store, th, "inner")
 	inner.RegisterRaftServer(th.inner.GetGrpcServer(), &RaftServerGRpc{App: th})
 	if err := th.inner.Start(); err != nil {
-		logrus.Errorf("inner start err,%s", err.Error())
-		return -4
+		return err
 	}
 	th.inner.SetHealth(true)
 
 	th.api = New(th.config.GrpcApiAddr, th.store, th, "api")
 	th.app.Register(th.api.GetGrpcServer())
 	if err := th.api.Start(); err != nil {
-		logrus.Errorf("api start err,%s", err.Error())
-		return -5
+		return err
 	}
 	th.api.SetHealth(th.Check())
 	th.Go(th.runOtherRequest)
 	th.WaitGo()
 
 	if rst := th.tryJoin(th.config.JoinAddr, true); rst != 0 {
-		return -6
+		return fmt.Errorf("tryJoin err %s %d", th.config.JoinAddr, rst)
 	}
 	th.handler.Register(th.app)
 	th.initHttpApi()
 	th.healthTicker()
 	th.watchJoinFile()
 	th.Work()
-	logrus.Infof("[%s]Init finished[%s][%d]", th.config.NodeId, VER, os.Getpid())
-	return 0
+	th.config.Prometheus.Namespace = th.getNS()
+	if err := th.collector.Init(th, th, th.config.Prometheus); err != nil {
+		return err
+	}
+	th.startExpireKey()
+	logrus.Infof("[%s]Init finished[%s][%d]", th.getNodeName(), VER, os.Getpid())
+	return nil
+}
+func (th *MainApp) Init(configPath string) error {
+	return th.InitWithArgs(configPath, os.Args)
+}
+func (th *MainApp) InitFlag(flag common.FlagClause) error {
+	appConfig := th.app.Config()
+	if appConfig != nil {
+		if err := common.SetFlagWithFlagClause(appConfig, th.getNS(), flag); err != nil {
+			return err
+		}
+	}
+	return common.SetFlagWithFlagClause(&th.config, "", flag)
+}
+func (th *MainApp) getNodeName() string {
+	return th.config.Raft.NodeId
 }
 func (th *MainApp) initDebugConfig() {
-	DebugTraceFutureLine = th.config.DebugConfig.TraceLine
-	if th.config.DebugConfig.PrintIntervalMs > 0 {
-		logrus.Infof("[%s]initDebugConfig", th.config.NodeId)
+	DebugTraceFutureLine = th.config.Debug.TraceLine
+	if th.config.Debug.PrintIntervalMs > 0 {
+		logrus.Infof("[%s]initDebugConfig", th.getNodeName())
 		common.OpenDebugGracefulExit()
 		var cnt, t int64
-		common.NewTicker(time.Duration(th.config.DebugConfig.PrintIntervalMs)*time.Millisecond, func() {
-			//logrus.Infof("[%s]%s", th.config.NodeId, GetFutureAve())
+		common.NewTicker(time.Duration(th.config.Debug.PrintIntervalMs)*time.Millisecond, func() {
+			//logrus.Infof("[%s]%s", th.getNodeName(), GetFutureAve())
 			//th.PrintQPS()
 			_t := time.Now().UnixNano()
 			_cnt, _ := th.runLogic.GetCnt()
 			if cnt > 0 {
 				__cnt := _cnt - cnt
 				__t := _t - t
-				logrus.Infof("[%s]LastTerm %dms,cnt %d,", th.config.NodeId, __t/1e6, __cnt)
+				logrus.Infof("[%s]LastTerm %dms,cnt %d,", th.getNodeName(), __t/1e6, __cnt)
 			}
 			cnt, t = _cnt, _t
 		})
@@ -308,12 +360,12 @@ func (th *MainApp) release() {
 		th.stopWait.Done()
 	}()
 	th.app.Release()
-	logrus.Infof("[%s]release", th.config.NodeId)
+	logrus.Infof("[%s]release", th.getNodeName())
 }
 func (th *MainApp) PrintQPS() {
 	qps := th.runLogic.GetQPS()
 	if len(qps) > 0 {
-		logrus.Infof("[%s]QPS,%s", th.config.NodeId, strings.Join(qps, "\\n"))
+		logrus.Infof("[%s]QPS,%s", th.getNodeName(), strings.Join(qps, "\\n"))
 	}
 }
 
@@ -328,7 +380,7 @@ func (th *MainApp) GRpcHandlePrioritize(f *ReplyFuture) {
 	})
 }
 func (th *MainApp) GRpcHandle(f *ReplyFuture) {
-	if !th.config.DebugConfig.GRpcHandleHash {
+	if !th.config.Debug.GRpcHandleHash {
 		f.AddTimeLine("GRpcHandle")
 		f.cnt++
 		switch f.cmd {
@@ -413,13 +465,13 @@ func (th *MainApp) gracefulShutdown() {
 	if s := th.stopped.Load(); s != nil && s.(bool) {
 		return
 	}
-	logrus.Infof("[%s]gracefulShutdown,begin", th.config.NodeId)
+	logrus.Infof("[%s]gracefulShutdown,begin", th.getNodeName())
 	th.preStop()
 	th.shutdown()
-	logrus.Infof("[%s]gracefulShutdown,end", th.config.NodeId)
+	logrus.Infof("[%s]gracefulShutdown,end", th.getNodeName())
 }
 func (th *MainApp) shutdown() {
-	logrus.Infof("[%s]shutdown,begin", th.config.NodeId)
+	logrus.Infof("[%s]shutdown,begin", th.getNodeName())
 	th.runLogic.Stop()
 	th.store.Shutdown()
 	th.innerLogic.Stop()
@@ -438,11 +490,12 @@ func (th *MainApp) shutdown() {
 	//	th.http.close()
 	//	th.http = nil
 	//}
-	logrus.Infof("[%s]shutdown,end", th.config.NodeId)
+	logrus.Infof("[%s]shutdown,end", th.getNodeName())
 }
 func (th *MainApp) preStop() {
 	th.Idle()
 	th.api.SetHealth(false)
+	th.collector.Stop()
 	th.stopUpdateTime()
 	th.stopHealthTicker()
 	th.watch.Stop()
@@ -457,15 +510,15 @@ func (th *MainApp) Stop() {
 		return
 	}
 	th.stopped.Store(true)
-	logrus.Infof("[%s]Stop,begin", th.config.NodeId)
+	logrus.Infof("[%s]Stop,begin", th.getNodeName())
 	th.preStop()
 	f := NewReplyFuturePrioritized(context.Background(), nil, nil)
 	f.cmd = FutureCmdTypeGracefulStop
 	th.GRpcHandle(f)
 	if f.Error() != nil {
-		logrus.Errorf("[%s]GracefulStop,err,%s", th.config.NodeId, f.Error().Error())
+		logrus.Errorf("[%s]GracefulStop,err,%s", th.getNodeName(), f.Error().Error())
 	}
-	logrus.Infof("[%s]Stop,end", th.config.NodeId)
+	logrus.Infof("[%s]Stop,end", th.getNodeName())
 	common.NewTicker(2*time.Second, func() {
 		th.PrintGoroutineStack()
 	})
@@ -500,9 +553,9 @@ func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 		}
 	}()
 	*tryCnt++
-	logrus.Infof("[%s]tryConnect %s,%d/%d", th.config.NodeId, addr, *tryCnt, th.config.TryJoinTime)
+	logrus.Infof("[%s]tryConnect %s,%d/%d", th.getNodeName(), addr, *tryCnt, th.config.TryJoinTime)
 	g := NewInnerGRpcClient(time.Duration(th.config.ConnectTimeoutMs) * time.Millisecond)
-	if err := g.Connect(addr, th.config.NodeId); err != nil {
+	if err := g.Connect(addr, th.getNodeName()); err != nil {
 		logrus.Errorf("Join %s failed,%s", addr, err.Error())
 		if *tryCnt >= th.config.TryJoinTime {
 			rst = -1
@@ -521,25 +574,25 @@ func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 	//ctx, _ := context.WithTimeout(context.Background(), grpcTimeoutMs)
 	if rsp, err := g.GetClient().JoinRequest(context.Background(), &inner.JoinReq{
 		Info: &inner.Member{
-			NodeId:    th.config.NodeId,
-			RaftAddr:  th.config.RaftAddr,
+			NodeId:    th.getNodeName(),
+			RaftAddr:  th.config.Raft.Addr,
 			InnerAddr: th.config.InnerAddr,
 			Ver:       th.config.Ver,
 		},
 	}); err != nil {
-		logrus.Errorf("[%s]JoinRequest error,%s,%s", th.config.NodeId, addr, err.Error())
+		logrus.Errorf("[%s]JoinRequest error,%s,%s", th.getNodeName(), addr, err.Error())
 		rst = -2
 		return
 	} else {
 		if rsp.Result < 0 {
-			logrus.Error("[%s]JoinRequest failed,%s,%s", th.config.NodeId, addr, rsp.Message)
+			logrus.Error("[%s]JoinRequest failed,%s,%s", th.getNodeName(), addr, rsp.Message)
 			rst = -3
 			return
 		} else if rsp.Result == ResultCodeExists {
 			th.OnlyJoin(rsp.Info)
-			logrus.Infof("[%s]JoinRequest exists,%s", th.config.NodeId, addr)
+			logrus.Infof("[%s]JoinRequest exists,%s", th.getNodeName(), addr)
 		}
-		logrus.Infof("[%s]JoinRequest succeed,%s,%d", th.config.NodeId, addr, rsp.Result)
+		logrus.Infof("[%s]JoinRequest succeed,%s,%d", th.getNodeName(), addr, rsp.Result)
 	}
 	rst = 0
 }
@@ -555,7 +608,7 @@ func (th *MainApp) tryJoin(addrs string, block bool) (rst int) {
 	}
 	for _, addr := range addrV {
 		if th.members.GetByGrpcAddr(addr) != nil {
-			logrus.Debugf("[%s]tryJoin,already in ,%s", th.config.NodeId, addr)
+			logrus.Debugf("[%s]tryJoin,already in ,%s", th.getNodeName(), addr)
 			continue
 		}
 		th.GoN(func(p ...interface{}) {
@@ -571,10 +624,10 @@ func (th *MainApp) tryJoin(addrs string, block bool) (rst int) {
 	return
 }
 func (th *MainApp) joinSelf() {
-	th.members.selfNodeId = th.config.NodeId
+	th.members.selfNodeId = th.getNodeName()
 	th.Join(&inner.Member{
-		NodeId:    th.config.NodeId,
-		RaftAddr:  th.config.RaftAddr,
+		NodeId:    th.getNodeName(),
+		RaftAddr:  th.config.Raft.Addr,
 		InnerAddr: th.config.InnerAddr,
 		Ver:       th.config.Ver,
 	})
@@ -604,14 +657,14 @@ func (th *MainApp) joinMemBoot(info *inner.Member) error {
 			return err
 		}
 	} else {
-		logrus.Infof("[%s]Join,len(%d)", th.config.NodeId, th.members.Len())
-		if th.config.BootstrapExpect > 0 && th.members.Len() >= th.config.BootstrapExpect {
+		logrus.Infof("[%s]Join,len(%d)", th.getNodeName(), th.members.Len())
+		if th.config.Raft.BootstrapExpect > 0 && th.members.Len() >= th.config.Raft.BootstrapExpect {
 			th.members.Foreach(func(member *Member) {
 				th.GetStore().AddServer(member.NodeId, member.RaftAddr)
 			})
 			//开始选举
 			if err := th.GetStore().BootStrap(); err != nil {
-				logrus.Errorf("[%s] BootStrap,err,%s", th.config.NodeId, err.Error())
+				logrus.Errorf("[%s] BootStrap,err,%s", th.getNodeName(), err.Error())
 				return err
 			}
 		}
@@ -619,7 +672,7 @@ func (th *MainApp) joinMemBoot(info *inner.Member) error {
 	return nil
 }
 func (th *MainApp) joinMem(info *inner.Member) (err error) {
-	logrus.Infof("[%s]joinMem,%s", th.config.NodeId, info.NodeId)
+	logrus.Infof("[%s]joinMem,%s", th.getNodeName(), info.NodeId)
 	if th.store.IsLeader() { //leader
 		if info.Ver < th.config.Ver { //小于当前版本
 			return fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver)
@@ -636,12 +689,12 @@ func (th *MainApp) joinMem(info *inner.Member) (err error) {
 	} else if th.store.IsFollower() {
 		con := th.inner.GetInner()
 		if con == nil {
-			return fmt.Errorf("[%s]node can not work[%v]", th.config.NodeId, th.store.GetRaft().State())
+			return fmt.Errorf("[%s]node can not work[%v]", th.getNodeName(), th.store.GetRaft().State())
 		}
 		con.GetRaftClient(func(client inner.RaftClient) {
 			if client != nil {
 				ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
-				logrus.Debugf("[%s]JoinRequest begin,%s", th.config.NodeId, info.NodeId)
+				logrus.Debugf("[%s]JoinRequest begin,%s", th.getNodeName(), info.NodeId)
 				if rsp, _err := client.JoinRequest(ctx, &inner.JoinReq{
 					Info: &inner.Member{
 						NodeId:    info.NodeId,
@@ -659,7 +712,7 @@ func (th *MainApp) joinMem(info *inner.Member) (err error) {
 			} else {
 				err = errLeaderCon
 			}
-			logrus.Debugf("[%s]JoinRequest end,%s", th.config.NodeId, info.NodeId)
+			logrus.Debugf("[%s]JoinRequest end,%s", th.getNodeName(), info.NodeId)
 		})
 	} else {
 		return fmt.Errorf("node can not work (candidate)")
@@ -668,7 +721,7 @@ func (th *MainApp) joinMem(info *inner.Member) (err error) {
 }
 func (th *MainApp) addMem(info *inner.Member) (bool, error) {
 	if th.members.Get(info.NodeId) != nil {
-		th.members.SynMemberToAll(th.config.Bootstrap, th.config.BootstrapExpect)
+		th.members.SynMemberToAll(th.config.Raft.Bootstrap, th.config.Raft.BootstrapExpect)
 		return true, nil
 	}
 	if err := th.members.Add(&Member{
@@ -680,11 +733,11 @@ func (th *MainApp) addMem(info *inner.Member) (bool, error) {
 		return true, err
 	}
 	th.updateLatestVersion(info.Ver)
-	if th.config.NodeId == info.NodeId { // join self
+	if th.getNodeName() == info.NodeId { // join self
 		return true, nil
 	}
 	//同步下
-	th.members.SynMemberToAll(th.config.Bootstrap, th.config.BootstrapExpect)
+	th.members.SynMemberToAll(th.config.Raft.Bootstrap, th.config.Raft.BootstrapExpect)
 	return false, nil
 }
 func (th *MainApp) Join(info *inner.Member) error {
@@ -710,8 +763,8 @@ func (th *MainApp) healthTicker() {
 							ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
 							_, err := client.HealthRequest(ctx, &inner.HealthReq{
 								Info: &inner.Member{
-									NodeId:    th.config.NodeId,
-									RaftAddr:  th.config.RaftAddr,
+									NodeId:    th.getNodeName(),
+									RaftAddr:  th.config.Raft.Addr,
 									InnerAddr: th.config.InnerAddr,
 									Ver:       th.config.Ver,
 									LastIndex: th.store.GetRaft().LastIndex(),
@@ -719,9 +772,9 @@ func (th *MainApp) healthTicker() {
 								SendTime: time.Now().UnixNano(),
 							})
 							if err != nil {
-								logrus.Warnf("[%s]healthTicker(failed) to [%s], %s", th.config.NodeId, member.NodeId, err.Error())
+								logrus.Warnf("[%s]healthTicker(failed) to [%s], %s", th.getNodeName(), member.NodeId, err.Error())
 							} else {
-								//logrus.Debugf("[%s]healthTicker(ok) to [%s], %d", th.config.NodeId, member.NodeId, (time.Now().UnixNano()-rsp.SendTime)/1e6)
+								//logrus.Debugf("[%s]healthTicker(ok) to [%s], %d", th.getNodeName(), member.NodeId, (time.Now().UnixNano()-rsp.SendTime)/1e6)
 							}
 							member.Health(err == nil)
 						}
@@ -738,12 +791,29 @@ func addrEqual(addr1, addr2 string) bool {
 	sort.Strings(addr2s)
 	return strings.Join(addr1s, ",") == strings.Join(addr2s, ",")
 }
+func ReadJoinAddr(fileName string) (string, error) {
+	addr := ""
+	if b, err := ioutil.ReadFile(fileName); err != nil {
+		return "", err
+	} else {
+		r := bufio.NewReader(bytes.NewBuffer(b))
+		for line, _, _ := r.ReadLine(); line != nil; line, _, _ = r.ReadLine() {
+			if len(addr) == 0 {
+				addr = string(line)
+			} else {
+				addr = fmt.Sprintf("%s,%s", addr, string(line))
+			}
+		}
+	}
+	return addr, nil
+}
+
 func (th *MainApp) trimJoinFile(file string) {
 	if len(file) == 0 {
 		return
 	}
-	addrs, err := common.ReadJoinAddr(file)
-	logrus.Infof("[%s]watchJoinFile,%s,{%s}", th.config.NodeId, file, addrs)
+	addrs, err := ReadJoinAddr(file)
+	logrus.Infof("[%s]watchJoinFile,%s,{%s}", th.getNodeName(), file, addrs)
 	if err != nil {
 		logrus.Errorf("watchJoinFile,error,%s,%s", file, err.Error())
 	} else {
@@ -755,7 +825,7 @@ func (th *MainApp) trimJoinFile(file string) {
 }
 func (th *MainApp) watchJoinFile() {
 	if s := th.stopped.Load(); s != nil && s.(bool) {
-		logrus.Infof("[%s]Stopping ignore watchJoinFile", th.config.NodeId)
+		logrus.Infof("[%s]Stopping ignore watchJoinFile", th.getNodeName())
 		return
 	}
 	th.innerLogic.HandleNoHash(0, func(err error) {
@@ -784,26 +854,26 @@ func (th *MainApp) checkUpdate() {
 	for _, node := range nodes {
 		mem := th.members.Get(string(node.ID))
 		if mem == nil {
-			logrus.Errorf("[%s]can not found %s", th.config.NodeId, node.ID)
+			logrus.Errorf("[%s]can not found %s", th.getNodeName(), node.ID)
 			continue
 		}
 		if mem.Ver > th.config.Ver {
 			newLeader = &node
 		}
-		if mem.Ver < latestVer && node.Suffrage == raft.Voter && mem.NodeId != th.config.NodeId { //版本低的移除选举权（不能移除自己）
+		if mem.Ver < latestVer && node.Suffrage == raft.Voter && mem.NodeId != th.getNodeName() { //版本低的移除选举权（不能移除自己）
 			if err := th.store.GetRaft().DemoteVoter(node.ID, 0, 0).Error(); err != nil {
-				logrus.Errorf("[%s]DemoteVoter %s err,%s", th.config.NodeId, node.ID, err.Error())
+				logrus.Errorf("[%s]DemoteVoter %s err,%s", th.getNodeName(), node.ID, err.Error())
 			} else {
-				logrus.Infof("[%s]DemoteVoter %s", th.config.NodeId, node.ID)
+				logrus.Infof("[%s]DemoteVoter %s", th.getNodeName(), node.ID)
 			}
 			newLeader = nil
 		}
 	}
 	if newLeader != nil {
 		if err := th.store.GetRaft().LeadershipTransferToServer(newLeader.ID, newLeader.Address).Error(); err != nil {
-			logrus.Errorf("[%s]LeaderTransfer to %s,err,%s", th.config.NodeId, newLeader.ID, err.Error())
+			logrus.Errorf("[%s]LeaderTransfer to %s,err,%s", th.getNodeName(), newLeader.ID, err.Error())
 		} else {
-			logrus.Infof("[%s]LeaderTransfer to %s", th.config.NodeId, newLeader.ID)
+			logrus.Infof("[%s]LeaderTransfer to %s", th.getNodeName(), newLeader.ID)
 			return
 		}
 	}
@@ -812,20 +882,20 @@ func (th *MainApp) checkUpdate() {
 	th.startUpdateTime()
 }
 func (th *MainApp) transferLeader(newLeader *raft.Server) (err error) {
-	logrus.Infof("[%s]transferLeader", th.config.NodeId)
+	logrus.Infof("[%s]transferLeader", th.getNodeName())
 	if th.store.GetRaft().State() == raft.Leader {
-		if err = th.store.GetRaft().DemoteVoter(raft.ServerID(th.config.NodeId), 0, 0).Error(); err == nil {
+		if err = th.store.GetRaft().DemoteVoter(raft.ServerID(th.getNodeName()), 0, 0).Error(); err == nil {
 			//if newLeader != nil {
 			//	if err = th.store.GetRaft().LeadershipTransferToServer(newLeader.ID, newLeader.Address).Error(); err != nil {
-			//		logrus.Errorf("[%s]transferLeader,LeadershipTransferToServer,err,%s", th.config.NodeId, err.Error())
+			//		logrus.Errorf("[%s]transferLeader,LeadershipTransferToServer,err,%s", th.getNodeName(), err.Error())
 			//	}
 			//} else {
 			//	if err = th.store.GetRaft().LeadershipTransfer().Error(); err != nil {
-			//		logrus.Errorf("[%s]transferLeader,LeadershipTransfer,err,%s", th.config.NodeId, err.Error())
+			//		logrus.Errorf("[%s]transferLeader,LeadershipTransfer,err,%s", th.getNodeName(), err.Error())
 			//	}
 			//}
 		} else {
-			logrus.Errorf("[%s]transferLeader,DemoteVoter,err,%s", th.config.NodeId, err.Error())
+			logrus.Errorf("[%s]transferLeader,DemoteVoter,err,%s", th.getNodeName(), err.Error())
 		}
 	}
 	return
@@ -846,7 +916,7 @@ func (th *MainApp) stopUpdateTime() {
 
 //cur node upgrade to leader
 func (th *MainApp) onChgToLeader() {
-	logrus.Infof("[%s]onChgToLeader,last index,%d", th.config.NodeId, th.store.GetRaft().LastIndex())
+	logrus.Infof("[%s]onChgToLeader,last index,%d", th.getNodeName(), th.store.GetRaft().LastIndex())
 }
 
 //only run on leader node
@@ -856,17 +926,17 @@ func (th *MainApp) checkRemoveOldVersionNode() {
 	for _, node := range nodes {
 		mem := th.members.Get(string(node.ID))
 		if mem == nil {
-			logrus.Errorf("[%s]can not found %s", th.config.NodeId, node.ID)
+			logrus.Errorf("[%s]can not found %s", th.getNodeName(), node.ID)
 			continue
 		}
 		if mem.Ver < th.config.Ver {
 			oldMem = append(oldMem, mem)
 		}
 	}
-	removeNodes := len(nodes) - th.config.BootstrapExpect
+	removeNodes := len(nodes) - th.config.Raft.BootstrapExpect
 	for i := 0; i < removeNodes && i < len(oldMem); i++ { //移除多余的旧版本node
 		mem := oldMem[i]
-		if mem.NodeId == th.config.NodeId {
+		if mem.NodeId == th.getNodeName() {
 			continue
 		}
 		th.removeServer(mem.NodeId)
@@ -874,21 +944,21 @@ func (th *MainApp) checkRemoveOldVersionNode() {
 }
 func (th *MainApp) removeServer(nodeId string) error {
 	if err := th.store.GetRaft().RemoveServer(raft.ServerID(nodeId), 0, 0).Error(); err != nil {
-		logrus.Errorf("[%s]removeServer err,%s,%s", th.config.NodeId, nodeId, err.Error())
+		logrus.Errorf("[%s]removeServer err,%s,%s", th.getNodeName(), nodeId, err.Error())
 		return err
 	} else {
-		logrus.Infof("[%s]removeServer successful,%s,%v", th.config.NodeId, nodeId, th.store.GetNodes())
+		logrus.Infof("[%s]removeServer successful,%s,%v", th.getNodeName(), nodeId, th.store.GetNodes())
 		th.members.LeaveToAll(nodeId)
 		th.members.Remove(nodeId)
 	}
 	return nil
 }
 func (th *MainApp) removeMember(nodeId string) error {
-	if nodeId == th.config.NodeId { //移除自己
+	if nodeId == th.getNodeName() { //移除自己
 		th.gracefulShutdown()
 	} else { //移除其他节点
 		removed := th.members.Remove(nodeId)
-		logrus.Infof("[%s]removeMember finished,%s,%v", th.config.NodeId, nodeId, removed)
+		logrus.Infof("[%s]removeMember finished,%s,%v", th.getNodeName(), nodeId, removed)
 	}
 	return nil
 }
@@ -896,18 +966,19 @@ func (th *MainApp) removeMember(nodeId string) error {
 func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 	f.AddTimeLine("leaderGRpc")
 	if f.prioritized {
-		logrus.Warnf("[%s]leaderGRpc,%v", th.config.NodeId, f.req)
+		logrus.Warnf("[%s]leaderGRpc,%v", th.getNodeName(), f.req)
 	}
 	h := func(err error) {
 		if err != nil {
-			logrus.Warnf("[%s]leaderGRpcHandle,err,%s,%v", th.config.NodeId, err.Error(), f.req)
+			logrus.Warnf("[%s]leaderGRpcHandle,err,%s,%v", th.getNodeName(), err.Error(), f.req)
 			f.response(err)
 			return
 		}
 		f.AddTimeLine("leaderGRpcHandle")
 		if f.prioritized {
-			logrus.Warnf("[%s]leaderGRpc,%v", th.config.NodeId, f.req)
+			logrus.Warnf("[%s]leaderGRpc,%v", th.getNodeName(), f.req)
 		}
+		atomic.AddUint64(&th.queryCnt, 1)
 		message := f.req.(protoreflect.ProtoMessage)
 		method := common.GetHandleFunctionName(message)
 		if _, err := th.handler.Handle(method, []reflect.Value{reflect.ValueOf(th.app), reflect.ValueOf(f.req), reflect.ValueOf(f.rsp), reflect.ValueOf(&f.rspFuture)}); err != nil {
@@ -925,9 +996,9 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 					err == raft.ErrLeadershipTransferInProgress ||
 					err == raft.ErrEnqueueTimeout ||
 					err == raft.ErrNotLeader { //
-					logrus.Warnf("[%s]ApplyLog warn,%s,%v", th.config.NodeId, err.Error(), f.req)
+					logrus.Warnf("[%s]ApplyLog warn,%s,%v", th.getNodeName(), err.Error(), f.req)
 					if f.trans {
-						logrus.Warnf("[%s]leaderGRpc trans back,%v", th.config.NodeId, f.req)
+						logrus.Warnf("[%s]leaderGRpc trans back,%v", th.getNodeName(), f.req)
 						f.response(errTransfer)
 						return
 					}
@@ -936,12 +1007,12 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 					th.GRpcHandlePrioritize(f)
 					return
 				} else {
-					logrus.Errorf("[%s]ApplyLog error,%s", th.config.NodeId, err.Error())
+					logrus.Errorf("[%s]ApplyLog error,%s", th.getNodeName(), err.Error())
 				}
 				f.response(err)
 			} else {
 				if f.prioritized {
-					logrus.Warnf("[%s]leaderGRpc result,%v", th.config.NodeId, f.req)
+					logrus.Warnf("[%s]leaderGRpc result,%v", th.getNodeName(), f.req)
 				}
 				f.AddTimeLine("Response")
 				f.response(nil)
@@ -963,20 +1034,20 @@ TODO followerGRpc不单独协程时可以做超时检测，免得把超时的请
 */
 func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 	if f.trans {
-		logrus.Warnf("[%s]followerGRpc trans,%v", th.config.NodeId, f.req)
+		logrus.Warnf("[%s]followerGRpc trans,%v", th.getNodeName(), f.req)
 		f.response(errTransfer)
 		return
 	}
-	logrus.Debugf("[%s]followerGRpc,%d,%v", th.config.NodeId, f.cnt, f.req)
+	logrus.Debugf("[%s]followerGRpc,%d,%v", th.getNodeName(), f.cnt, f.req)
 	t := time.Now().UnixNano()
 	defer func() {
 		if dif := time.Now().UnixNano() - t; dif > 1e9 {
-			logrus.Errorf("[%s]followerGRpc[%v]%v,%v,%v", th.config.NodeId, dif, f.req, con.addr, f.Timeline)
+			logrus.Errorf("[%s]followerGRpc[%v]%v,%v,%v", th.getNodeName(), dif, f.req, con.addr, f.Timeline)
 		}
 	}()
 	f.AddTimeLine("followerGRpc")
 	if f.prioritized {
-		logrus.Warnf("[%s]followerGRpc,%v,%v", th.config.NodeId, th.store.GetRaft().State(), f.req)
+		logrus.Warnf("[%s]followerGRpc,%v,%v", th.getNodeName(), th.store.GetRaft().State(), f.req)
 	}
 
 	if th.store.GetRaft().State() == raft.Leader {
@@ -1018,7 +1089,7 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 			}
 			f.AddTimeLine("followerGRpcTransLeader")
 			if rsp.Back { //退回
-				logrus.Warnf("[%s]followerGRpc back,%v", th.config.NodeId, f.req)
+				logrus.Warnf("[%s]followerGRpc back,%v", th.getNodeName(), f.req)
 				//Back to grpc chan
 				f.rspFuture.Clear()
 				th.GRpcHandlePrioritize(f)
@@ -1030,7 +1101,7 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 }
 func (th *MainApp) leaderJoin(f *ReplyFuture) {
 	info := f.req.(*inner.JoinReq).Info
-	logrus.Infof("[%s]leaderJoin,%s", th.config.NodeId, info.NodeId)
+	logrus.Infof("[%s]leaderJoin,%s", th.getNodeName(), info.NodeId)
 	if info.Ver < th.config.Ver { //小于当前版本
 		f.response(fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver))
 		return
@@ -1052,14 +1123,14 @@ func (th *MainApp) leaderJoin(f *ReplyFuture) {
 }
 func (th *MainApp) followJoin(f *ReplyFuture) {
 	info := f.req.(*inner.JoinReq).Info
-	logrus.Infof("[%s]followJoin[%d],%s", th.config.NodeId, f.cnt, info.NodeId)
-	defer logrus.Infof("[%s]followJoin finished,%s", th.config.NodeId, info.NodeId)
+	logrus.Infof("[%s]followJoin[%d],%s", th.getNodeName(), f.cnt, info.NodeId)
+	defer logrus.Infof("[%s]followJoin finished,%s", th.getNodeName(), info.NodeId)
 	if th.isBoot.Load().(bool) {
 		if th.members.Get(info.NodeId) != nil {
 			f.rsp.(*inner.JoinRsp).Result = ResultCodeExists
 			f.rsp.(*inner.JoinRsp).Info = &inner.Member{
-				NodeId:    th.config.NodeId,
-				RaftAddr:  th.config.RaftAddr,
+				NodeId:    th.getNodeName(),
+				RaftAddr:  th.config.Raft.Addr,
 				InnerAddr: th.config.InnerAddr,
 				Ver:       th.config.Ver,
 				LastIndex: th.store.GetRaft().LastIndex(),
@@ -1075,7 +1146,7 @@ func (th *MainApp) followJoin(f *ReplyFuture) {
 		con.GetRaftClient(func(client inner.RaftClient) {
 			if client != nil {
 				ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
-				logrus.Debugf("[%s]JoinRequest begin,%s", th.config.NodeId, info.NodeId)
+				logrus.Debugf("[%s]JoinRequest begin,%s", th.getNodeName(), info.NodeId)
 				rsp, err := client.JoinRequest(ctx, &inner.JoinReq{
 					Info: &inner.Member{
 						NodeId:    info.NodeId,
@@ -1091,7 +1162,7 @@ func (th *MainApp) followJoin(f *ReplyFuture) {
 			} else {
 				f.response(errLeaderCon)
 			}
-			logrus.Debugf("[%s]JoinRequest end,%s", th.config.NodeId, info.NodeId)
+			logrus.Debugf("[%s]JoinRequest end,%s", th.getNodeName(), info.NodeId)
 			return
 		})
 	} else {
@@ -1099,14 +1170,14 @@ func (th *MainApp) followJoin(f *ReplyFuture) {
 			f.response(err)
 			return
 		}
-		logrus.Infof("[%s]Join,len(%d)", th.config.NodeId, th.members.Len())
-		if th.config.BootstrapExpect > 0 && th.members.Len() >= th.config.BootstrapExpect {
+		logrus.Infof("[%s]Join,len(%d)", th.getNodeName(), th.members.Len())
+		if th.config.Raft.BootstrapExpect > 0 && th.members.Len() >= th.config.Raft.BootstrapExpect {
 			th.members.Foreach(func(member *Member) {
 				th.GetStore().AddServer(member.NodeId, member.RaftAddr)
 			})
 			//开始选举
 			if err := th.GetStore().BootStrap(); err != nil {
-				logrus.Errorf("[%s] BootStrap,err,%s", th.config.NodeId, err.Error())
+				logrus.Errorf("[%s] BootStrap,err,%s", th.getNodeName(), err.Error())
 				if err == raft.ErrCantBootstrap {
 					th.GRpcHandle(f)
 				} else {
@@ -1121,21 +1192,21 @@ func (th *MainApp) followJoin(f *ReplyFuture) {
 	}
 }
 func (th *MainApp) leaderGracefulStop(f *ReplyFuture) {
-	logrus.Infof("[%s]leaderGracefulStop", th.config.NodeId)
+	logrus.Infof("[%s]leaderGracefulStop", th.getNodeName())
 	if l := len(th.store.GetNodes()); l > 1 {
 		if err := th.transferLeader(nil); err == nil || err == raft.ErrNotLeader {
 			th.GRpcHandle(f)
 		} else {
-			logrus.Errorf("[%s]leaderGracefulStop,err,%s", th.config.NodeId, err.Error())
+			logrus.Errorf("[%s]leaderGracefulStop,err,%s", th.getNodeName(), err.Error())
 			th.GRpcHandle(f)
 		}
 	} else {
-		logrus.Infof("[%s]leaderGracefulStop,%d", th.config.NodeId, l)
+		logrus.Infof("[%s]leaderGracefulStop,%d", th.getNodeName(), l)
 		th.shutdown()
 		f.response(nil)
 	}
 	//if len(th.store.GetNodes()) > 0 {
-	//	if err := th.removeServer(th.config.NodeId); err == raft.ErrNotLeader {
+	//	if err := th.removeServer(th.getNodeName()); err == raft.ErrNotLeader {
 	//		th.GRpcHandle(f)
 	//		return
 	//	}
@@ -1145,11 +1216,11 @@ func (th *MainApp) leaderGracefulStop(f *ReplyFuture) {
 }
 func (th *MainApp) followGracefulStop(f *ReplyFuture) {
 	if f.cnt < 10 || f.cnt%10 == 0 {
-		logrus.Infof("[%s]followGracefulStop[%d]", th.config.NodeId, f.cnt)
+		logrus.Infof("[%s]followGracefulStop[%d]", th.getNodeName(), f.cnt)
 	}
 	if th.isBoot.Load().(bool) {
 		if l := len(th.store.GetNodes()); l <= 1 {
-			logrus.Debugf("[%s]followGracefulStop[%d],%d", th.config.NodeId, f.cnt, l)
+			logrus.Debugf("[%s]followGracefulStop[%d],%d", th.getNodeName(), f.cnt, l)
 			th.shutdown()
 			f.response(nil)
 			return
@@ -1163,12 +1234,12 @@ func (th *MainApp) followGracefulStop(f *ReplyFuture) {
 			if client != nil {
 				ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
 				rsp, err := client.ExitRequest(ctx, &inner.ExitReq{
-					NodeId: th.config.NodeId,
+					NodeId: th.getNodeName(),
 				})
 				if err != nil {
-					logrus.Errorf("[%s]followGracefulStop boot,err,%s", th.config.NodeId, err.Error())
+					logrus.Errorf("[%s]followGracefulStop boot,err,%s", th.getNodeName(), err.Error())
 				} else if rsp.Result == ResultCodeNotLeader {
-					logrus.Debugf("[%s]followGracefulStop boot,rollback", th.config.NodeId)
+					logrus.Debugf("[%s]followGracefulStop boot,rollback", th.getNodeName())
 					th.GRpcHandle(f)
 					return
 				}
@@ -1178,15 +1249,15 @@ func (th *MainApp) followGracefulStop(f *ReplyFuture) {
 		})
 	} else {
 		th.members.Foreach(func(member *Member) {
-			if member.NodeId != th.config.NodeId {
+			if member.NodeId != th.getNodeName() {
 				member.Con.GetRaftClient(func(client inner.RaftClient) {
 					if client != nil {
 						ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
 						_, err := client.ExitRequest(ctx, &inner.ExitReq{
-							NodeId: th.config.NodeId,
+							NodeId: th.getNodeName(),
 						})
 						if err != nil {
-							logrus.Errorf("[%s]followGracefulStop not boot,err,%s,%s", th.config.NodeId, member.NodeId, err.Error())
+							logrus.Errorf("[%s]followGracefulStop not boot,err,%s,%s", th.getNodeName(), member.NodeId, err.Error())
 						}
 					}
 				})
@@ -1198,7 +1269,7 @@ func (th *MainApp) followGracefulStop(f *ReplyFuture) {
 }
 
 func (th *MainApp) candidateGracefulStop(f *ReplyFuture) {
-	logrus.Infof("[%s]candidateGracefulStop", th.config.NodeId)
+	logrus.Infof("[%s]candidateGracefulStop", th.getNodeName())
 	if len(th.store.GetNodes()) == 0 {
 		th.shutdown()
 		f.response(nil)
@@ -1209,12 +1280,12 @@ func (th *MainApp) candidateGracefulStop(f *ReplyFuture) {
 }
 func (th *MainApp) leaderExit(f *ReplyFuture) {
 	nodeId := f.req.(*inner.ExitReq).NodeId
-	logrus.Infof("[%s]leaderExit,%s", th.config.NodeId, nodeId)
+	logrus.Infof("[%s]leaderExit,%s", th.getNodeName(), nodeId)
 	f.response(th.removeServer(nodeId))
 }
 func (th *MainApp) followerExit(f *ReplyFuture) {
 	nodeId := f.req.(*inner.ExitReq).NodeId
-	logrus.Infof("[%s]followerExit,%s", th.config.NodeId, nodeId)
+	logrus.Infof("[%s]followerExit,%s", th.getNodeName(), nodeId)
 	if th.isBoot.Load().(bool) {
 		f.response(raft.ErrNotLeader)
 	} else {
@@ -1224,17 +1295,17 @@ func (th *MainApp) followerExit(f *ReplyFuture) {
 }
 func (th *MainApp) allRemove(f *ReplyFuture) {
 	nodeId := f.req.(*inner.RemoveMemberReq).NodeId
-	logrus.Infof("[%s]allRemove,%s", th.config.NodeId, nodeId)
-	defer logrus.Infof("[%s]allRemove finished,%s", th.config.NodeId, nodeId)
+	logrus.Infof("[%s]allRemove,%s", th.getNodeName(), nodeId)
+	defer logrus.Infof("[%s]allRemove finished,%s", th.getNodeName(), nodeId)
 	f.response(th.removeMember(nodeId))
 }
 func (th *MainApp) allSynMember(f *ReplyFuture) {
 	req := f.req.(*inner.SynMemberReq)
-	logrus.Infof("[%s]allSynMember,%d,%v,%v", th.config.NodeId, req.BootstrapExpect, req.Bootstrap, req.Mem)
-	defer logrus.Infof("[%s]allSynMember finished,%d,%v,%v", th.config.NodeId, req.BootstrapExpect, req.Bootstrap, req.Mem)
+	logrus.Infof("[%s]allSynMember,%d,%v,%v", th.getNodeName(), req.BootstrapExpect, req.Bootstrap, req.Mem)
+	defer logrus.Infof("[%s]allSynMember finished,%d,%v,%v", th.getNodeName(), req.BootstrapExpect, req.Bootstrap, req.Mem)
 
-	th.config.Bootstrap = req.Bootstrap
-	th.config.BootstrapExpect = int(req.BootstrapExpect)
+	th.config.Raft.Bootstrap = req.Bootstrap
+	th.config.Raft.BootstrapExpect = int(req.BootstrapExpect)
 	for _, m := range req.Mem {
 		mem := th.members.Get(m.NodeId)
 		if mem != nil {
@@ -1247,7 +1318,7 @@ func (th *MainApp) allSynMember(f *ReplyFuture) {
 			Ver:       m.Ver,
 			LastIndex: m.LastIndex,
 		}); err != nil {
-			logrus.Errorf("[%s]allSynMember,Add,error,%s,%s", th.config.NodeId, m.NodeId, err.Error())
+			logrus.Errorf("[%s]allSynMember,Add,error,%s,%s", th.getNodeName(), m.NodeId, err.Error())
 		}
 		th.updateLatestVersion(m.Ver)
 	}
@@ -1259,15 +1330,15 @@ func (th *MainApp) sigGo() {
 	}()
 }
 func (th *MainApp) runGRpcRequest() {
-	logrus.Infof("[%s]runGRpcRequest,%d", th.config.NodeId, common.GoID())
+	logrus.Infof("[%s]runGRpcRequest,%d", th.getNodeName(), common.GoID())
 	defer func() {
 		if err := recover(); err != nil {
 			var buf [4096]byte
 			n := runtime.Stack(buf[:], false)
 			logrus.Debugf("crash %s", string(buf[:n]))
 		}
-		logrus.Infof("[%s]runGRpcRequest stop", th.config.NodeId)
-		fmt.Printf("[%s]consul runGRpcRequest stop", th.config.NodeId)
+		logrus.Infof("[%s]runGRpcRequest stop", th.getNodeName())
+		fmt.Printf("[%s]consul runGRpcRequest stop", th.getNodeName())
 		if th.inner != nil {
 			th.inner.Stop()
 			th.inner = nil
@@ -1285,13 +1356,13 @@ func (th *MainApp) runGRpcRequest() {
 	realStop := make(chan struct{}, 1)
 	for {
 		//if th.debug.Load() != nil {
-		//	logrus.Debugf("[%s]runGRpcRequest[%v][%v]", th.config.NodeId, th.store.GetRaft().State(), time.Now().UnixNano()-t)
+		//	logrus.Debugf("[%s]runGRpcRequest[%v][%v]", th.getNodeName(), th.store.GetRaft().State(), time.Now().UnixNano()-t)
 		//	t = time.Now().UnixNano()
 		//}
 		stopFunc := func() {
-			logrus.Infof("[%s]begin realStop timeout", th.config.NodeId)
+			logrus.Infof("[%s]begin realStop timeout", th.getNodeName())
 			common.NewTimer(delayStop, func() {
-				logrus.Infof("[%s]realStop", th.config.NodeId)
+				logrus.Infof("[%s]realStop", th.getNodeName())
 				realStop <- struct{}{}
 			})
 		}
@@ -1305,7 +1376,7 @@ func (th *MainApp) runGRpcRequest() {
 			case <-th.stopChan:
 				stopFunc()
 			case <-realStop:
-				logrus.Infof("[%s]rcv realStop", th.config.NodeId)
+				logrus.Infof("[%s]rcv realStop", th.getNodeName())
 				return
 			case <-th.sig:
 				break
@@ -1320,7 +1391,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Infof("[%s]rcv realStop", th.config.NodeId)
+					logrus.Infof("[%s]rcv realStop", th.getNodeName())
 					return
 				case <-th.sig:
 					break
@@ -1328,10 +1399,10 @@ func (th *MainApp) runGRpcRequest() {
 			} else {
 				select {
 				case <-th.stopChan:
-					logrus.Infof("[%s]follower nil", th.config.NodeId)
+					logrus.Infof("[%s]follower nil", th.getNodeName())
 					stopFunc()
 				case <-realStop:
-					logrus.Infof("[%s]rcv realStop", th.config.NodeId)
+					logrus.Infof("[%s]rcv realStop", th.getNodeName())
 					return
 				case <-th.sig:
 					break
@@ -1342,7 +1413,7 @@ func (th *MainApp) runGRpcRequest() {
 			case <-th.stopChan:
 				stopFunc()
 			case <-realStop:
-				logrus.Infof("[%s]rcv realStop", th.config.NodeId)
+				logrus.Infof("[%s]rcv realStop", th.getNodeName())
 				return
 			case <-th.sig:
 				break
@@ -1357,7 +1428,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Infof("[%s]shutdown not nil", th.config.NodeId)
+					logrus.Infof("[%s]shutdown not nil", th.getNodeName())
 					return
 				case <-th.sig:
 					break
@@ -1367,7 +1438,7 @@ func (th *MainApp) runGRpcRequest() {
 				case <-th.stopChan:
 					stopFunc()
 				case <-realStop:
-					logrus.Infof("[%s]shutdown nil", th.config.NodeId)
+					logrus.Infof("[%s]shutdown nil", th.getNodeName())
 					return
 				case <-th.sig:
 					break
@@ -1379,9 +1450,9 @@ func (th *MainApp) runGRpcRequest() {
 }
 
 func (th *MainApp) runOtherRequest() {
-	logrus.Infof("[%s]runOtherRequest,%d", th.config.NodeId, common.GoID())
+	logrus.Infof("[%s]runOtherRequest,%d", th.getNodeName(), common.GoID())
 	defer func() {
-		logrus.Infof("[%s]runOtherRequest stop", th.config.NodeId)
+		logrus.Infof("[%s]runOtherRequest stop", th.getNodeName())
 	}()
 	for {
 		switch th.store.GetRaft().State() {
@@ -1410,7 +1481,7 @@ func (th *MainApp) runOtherRequest() {
 						th.leaderExit(f)
 					})
 				default:
-					logrus.Errorf("[%s]lost deal cmd %v", th.config.NodeId, f.cmd)
+					logrus.Errorf("[%s]lost deal cmd %v", th.getNodeName(), f.cmd)
 				}
 			case <-th.stopOtherChan:
 				return
@@ -1440,7 +1511,7 @@ func (th *MainApp) runOtherRequest() {
 						th.followerExit(f)
 					})
 				default:
-					logrus.Errorf("[%s]lost deal cmd %v", th.config.NodeId, f.cmd)
+					logrus.Errorf("[%s]lost deal cmd %v", th.getNodeName(), f.cmd)
 				}
 			case <-th.stopOtherChan:
 				return

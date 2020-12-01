@@ -33,6 +33,14 @@ const (
 	timeFormat = "2006-01-02 15:04:05.000"
 )
 
+type LogConfigure struct {
+	Level    string `yaml:"level" json:"level" help:"log level" default:"DEBUG"`
+	Path     string `yaml:"path" json:"path" help:"log file path write to. if set stdout ,will ignore put file " default:"./log"`
+	MaxAge   int    `yaml:"max_age" json:"max_age" help:"MaxAge is the maximum number of days to retain old log files based on the timestamp encoded in their filename."`
+	MaxSize  int    `yaml:"max_size" json:"max_size" help:"MaxSize is the maximum size in megabytes of the log file before it gets rotated. It defaults to 100 megabytes."`
+	Compress bool   `yaml:"compress" json:"compress" help:"Compress determines if the rotated log files should be compressed using gzip."`
+}
+
 func closeLogFile(config *LogConfigure) bool {
 	return strings.ToLower(config.Path) == "stdout"
 }

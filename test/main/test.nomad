@@ -106,6 +106,7 @@ try_join_time: 3
 connect_timeout_ms: 5000
 bootstrap: false
 bootstrap_expect: [[ .count ]]
+log_cache_capacity: 1000
 log_config:
   level: DEBUG
   path: local/log

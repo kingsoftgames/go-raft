@@ -24,11 +24,12 @@ import (
 	"git.shiyou.kingsoft.com/infra/go-raft/app"
 )
 
-var count = 50000
+var count = 5
 var timeout = 10 * time.Second
 
 func Test_markSingleAppGRpc(t *testing.T) {
-	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
+	t.Log(common.GetStringSum(""))
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *app.Configure) {
 	})
 	singleAppTemplate(t, func() {
 		c := newClient("127.0.0.1:18310")
@@ -48,13 +49,14 @@ func Test_markSingleAppGRpc(t *testing.T) {
 			}()
 		}
 		w.Wait()
+		time.Sleep(10 * time.Second)
 		te.Call("end")
 		printTotalTimeLine()
 	})
 }
 
 func Test_markSingleAppGRpcLocalTest(t *testing.T) {
-	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *app.Configure) {
 	})
 	singleAppTemplate(t, func() {
 		GRpcLocalQuery("127.0.0.1:18310", "set", count, false, timeout)
@@ -118,12 +120,12 @@ func Test_Go(t *testing.T) {
 
 }
 func Test_RaftSingle_Apply(t *testing.T) {
-	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *app.Configure) {
 	})
 	var exitWait common.GracefulExit
 	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
-	if rst := appLeader.Init(leaderYaml); rst != 0 {
-		t.Errorf("appLeader Init error,%d", rst)
+	if err := appLeader.Init(leaderYaml); err != nil {
+		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
 	clientFunc := func() {
@@ -184,8 +186,8 @@ func Test_RaftCluster_Apply(t *testing.T) {
 
 	var exitWait common.GracefulExit
 	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
-	if rst := appLeader.Init(leaderYaml); rst != 0 {
-		t.Errorf("appLeader Init error,%d", rst)
+	if err := appLeader.Init(leaderYaml); err != nil {
+		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
 	clientFunc := func() {
@@ -248,16 +250,16 @@ func Test_RaftCluster_Apply(t *testing.T) {
 						appFollower2.Stop()
 					}()
 				})
-				if rst := appFollower2.Init(follower2Yaml); rst != 0 {
-					t.Errorf("appFollower2 Init error,%d", rst)
+				if err := appFollower2.Init(follower2Yaml); err != nil {
+					t.Errorf("appFollower2 Init error,%s", err.Error())
 					appLeader.Stop()
 					appFollower.Stop()
 					return
 				}
 				appFollower2.Start()
 			})
-			if rst := appFollower.Init(followerYaml); rst != 0 {
-				t.Errorf("appFollower Init error,%d", rst)
+			if err := appFollower.Init(followerYaml); err != nil {
+				t.Errorf("appFollower Init error,%s", err.Error())
 				appLeader.Stop()
 				return
 			}

@@ -23,40 +23,36 @@ func genConfig(content string, name string) string {
 	ioutil.WriteFile(name, []byte(content), os.ModePerm)
 	return name
 }
-func genConfigFromObj(cfg *common.Configure, name string) string {
+func genConfigFromObj(cfg *app.Configure, name string) string {
 	b, _ := yaml.Marshal(cfg)
 	ioutil.WriteFile(name, b, os.ModePerm)
 	return name
-}
-func newDefaultCfg() *common.Configure {
-	config := common.NewDefaultConfigure()
-	return config
 }
 
 var leaderYaml = "cache/leader.yaml"
 var followerYaml = "cache/follower.yaml"
 var follower2Yaml = "cache/follower2.yaml"
 
-func genYamlBase(name string, bootstrap bool, portShift int, storeInMem bool, cb func(configure *common.Configure)) string {
-	cfg := newDefaultCfg()
-	cfg.RaftAddr = fmt.Sprintf("127.0.0.1:%d", 18300+portShift)
+func genYamlBase(name string, bootstrap bool, portShift int, storeInMem bool, cb func(configure *app.Configure)) string {
+	cfg := &app.Configure{}
+	cfg.Raft.Addr = fmt.Sprintf("127.0.0.1:%d", 18300+portShift)
 	cfg.GrpcApiAddr = fmt.Sprintf("127.0.0.1:%d", 18310+portShift)
 	cfg.HttpApiAddr = fmt.Sprintf("127.0.0.1:%d", 18320+portShift)
 	cfg.InnerAddr = fmt.Sprintf("127.0.0.1:%d", 18330+portShift)
-	cfg.Bootstrap = bootstrap
-	cfg.BootstrapExpect = 0
+	cfg.Raft.Bootstrap = bootstrap
+	cfg.Raft.BootstrapExpect = 0
 	cfg.JoinAddr = ""
 	cfg.TryJoinTime = 3
 	if !bootstrap {
 		cfg.JoinAddr = "127.0.0.1:18330"
 	}
-	cfg.NodeId = fmt.Sprintf("n%d", portShift)
-	cfg.StoreInMem = storeInMem
-	cfg.StoreDir = "./cache/store/"
-	cfg.LogConfig.MaxSize = 100
-	cfg.LogConfig.MaxAge = 2
-	cfg.LogConfig.Path = "./cache/log"
-	cfg.LogConfig.Level = "DEBUG"
+	cfg.Raft.NodeId = fmt.Sprintf("n%d", portShift)
+	cfg.Raft.StoreInMem = storeInMem
+	cfg.Raft.StoreDir = "./cache/store/"
+	cfg.Log.MaxSize = 100
+	cfg.Log.MaxAge = 2
+	cfg.Log.Path = "./cache/log"
+	cfg.Log.Level = "DEBUG"
 	if cb != nil {
 		cb(cfg)
 	}
@@ -81,8 +77,8 @@ func genTestClusterApp2GrpcYaml() {
 func singleAppTemplate(t *testing.T, clientFunc func()) {
 	var exitWait common.GracefulExit
 	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
-	if rst := appLeader.Init(leaderYaml); rst != 0 {
-		t.Errorf("appLeader Init error,%d", rst)
+	if err := appLeader.Init(leaderYaml); err != nil {
+		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
 	appLeader.GetStore().OnStateChg.Add(func(i interface{}) {
@@ -108,8 +104,8 @@ func singleAppTemplate(t *testing.T, clientFunc func()) {
 func clusterAppTemplate(t *testing.T, clientFunc func()) {
 	var exitWait common.GracefulExit
 	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
-	if rst := appLeader.Init(leaderYaml); rst != 0 {
-		t.Errorf("appLeader Init error,%d", rst)
+	if err := appLeader.Init(leaderYaml); err != nil {
+		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
 	appLeader.GetStore().OnStateChg.Add(func(i interface{}) {
@@ -127,8 +123,8 @@ func clusterAppTemplate(t *testing.T, clientFunc func()) {
 					appFollower.Stop()
 				}()
 			})
-			if rst := appFollower.Init(followerYaml); rst != 0 {
-				t.Errorf("appFollower Init error,%d", rst)
+			if err := appFollower.Init(followerYaml); err != nil {
+				t.Errorf("appFollower Init error,%s", err.Error())
 				appLeader.Stop()
 				return
 			}
@@ -142,8 +138,8 @@ func clusterAppTemplate(t *testing.T, clientFunc func()) {
 func clusterApp2Template(t *testing.T, clientFunc func()) {
 	var exitWait common.GracefulExit
 	appLeader := app.NewMainApp(app.CreateApp("test"), &exitWait)
-	if rst := appLeader.Init(leaderYaml); rst != 0 {
-		t.Errorf("appLeader Init error,%d", rst)
+	if err := appLeader.Init(leaderYaml); err != nil {
+		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
 	appLeader.GetStore().OnStateChg.Add(func(i interface{}) {
@@ -167,16 +163,16 @@ func clusterApp2Template(t *testing.T, clientFunc func()) {
 						appFollower2.Stop()
 					}()
 				})
-				if rst := appFollower2.Init(follower2Yaml); rst != 0 {
-					t.Errorf("appFollower2 Init error,%d", rst)
+				if err := appFollower2.Init(follower2Yaml); err != nil {
+					t.Errorf("appFollower2 Init error,%s", err.Error())
 					appLeader.Stop()
 					appFollower.Stop()
 					return
 				}
 				appFollower2.Start()
 			})
-			if rst := appFollower.Init(followerYaml); rst != 0 {
-				t.Errorf("appFollower Init error,%d", rst)
+			if err := appFollower.Init(followerYaml); err != nil {
+				t.Errorf("appFollower Init error,%s", err.Error())
 				appLeader.Stop()
 				return
 			}

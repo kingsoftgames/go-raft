@@ -6,6 +6,8 @@ import (
 	"sync"
 	"testing"
 
+	"git.shiyou.kingsoft.com/infra/go-raft/app"
+
 	"git.shiyou.kingsoft.com/infra/go-raft/store"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -15,11 +17,11 @@ func Test_LogStore(t *testing.T) {
 	common.OpenDebugLog()
 	capacity := 500
 	count = 50000
-	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *common.Configure) {
-		configure.LogCacheCapacity = capacity
+	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *app.Configure) {
+		configure.Raft.LogCacheCapacity = capacity
 	})
-	followerYaml = genYamlBase(followerYaml, false, 1, true, func(configure *common.Configure) {
-		configure.LogCacheCapacity = capacity
+	followerYaml = genYamlBase(followerYaml, false, 1, true, func(configure *app.Configure) {
+		configure.Raft.LogCacheCapacity = capacity
 	})
 	clusterAppTemplate(t, func() {
 		c := []*testGRpcClient{newClient("127.0.0.1:18310")}
