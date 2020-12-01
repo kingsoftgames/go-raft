@@ -15,8 +15,17 @@ import (
 	"google.golang.org/grpc"
 )
 
+type Config struct {
+	A int `yaml:"a" help:"help a"`
+}
+
+func (Config) Key() string {
+	return "test"
+}
+
 type testApp struct {
 	mainApp *app.MainApp
+	config  TestConfig
 }
 
 func (th *testApp) Init(app *app.MainApp) error {
@@ -38,6 +47,19 @@ func (th *testApp) OnLeader(leader bool) {
 }
 func (th *testApp) GRpcHandle(f *app.ReplyFuture) {
 	th.mainApp.GRpcHandle(f)
+}
+func (th *testApp) Config() common.FileFlagType {
+	return nil
+}
+
+type TestConfig struct {
+	common.YamlType
+	A int    `yaml:"a" json:"a" help:"help testA" default:"3"`
+	B string `yaml:"b" json:"b" help:"help testB" default:"d3a"`
+}
+
+func (TestConfig) Help() string {
+	return "test"
 }
 
 func (th *testApp) HandleGetRequest(req *GetReq, rsp *GetRsp, rtv *app.HandlerRtv) {

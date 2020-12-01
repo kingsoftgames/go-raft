@@ -1,13 +1,15 @@
 package main
 
 import (
-	"flag"
 	"math/rand"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"gopkg.in/alecthomas/kingpin.v2"
 
 	"github.com/sirupsen/logrus"
 
@@ -30,30 +32,35 @@ var local *bool
 var naked *bool
 
 func main() {
-	flag.Parse()
+	testApp := kingpin.New(os.Args[0], "pressure test raft")
+	cli := testApp.Flag("cli", "whether run as client").Bool()
+	cnt = testApp.Flag("cnt", "count for send query (cnt*unit)").Default("1").Int()
+	cntUnit = testApp.Flag("unit", "unit size for query").Default("1000").Int()
+	addr = testApp.Flag("addr", "addr for api").Default("127.0.0.1:18310").String()
+	print = testApp.Flag("print", "print result").Bool()
+	timeout = testApp.Flag("timeout", "timeout for grpc").Default("5000").Int()
+	hash = testApp.Flag("hash", "whether use hash when query").Bool()
+	cmd = testApp.Flag("cmd", "cmd for query,can multi cmd split by ','").Default("set").String()
+	key = testApp.Flag("key", "key for get','").String()
+	debug = testApp.Flag("debug", "whether debug for test").Bool()
+	local = testApp.Flag("local", "local test").Bool()
+	naked = testApp.Flag("naked", "only when local=true take affect").Bool()
+	if cmd, err := testApp.Parse(os.Args[1:]); err != nil {
+		logrus.Fatal("parse flag err,%s", err.Error())
+	} else {
+		logrus.Infof("test flag: %s", cmd)
+	}
 	if *cli {
 		client()
 	} else {
 		if *debug {
 			app.DebugTraceFutureLine = true
 		}
-		app.RunMain()
+		app.RunMain("test")
 	}
 }
 func init() {
 	rand.Seed(time.Now().UnixNano())
-	cli = flag.Bool("cli", false, "whether run as client")
-	cnt = flag.Int("cnt", 1, "count for send query (cnt*unit)")
-	cntUnit = flag.Int("unit", 1000, "unit size for query")
-	addr = flag.String("addr", "127.0.0.1:18310", "addr for api")
-	print = flag.Bool("print", true, "print result")
-	timeout = flag.Int("timeout", 5000, "timeout for grpc")
-	hash = flag.Bool("hash", true, "whether use hash when query")
-	cmd = flag.String("cmd", "set", "cmd for query,can multi cmd split by ','")
-	key = flag.String("key", "", "key for get','")
-	debug = flag.Bool("debug", false, "whether debug for test")
-	local = flag.Bool("local", false, "local test")
-	naked = flag.Bool("naked", false, "only when local=true take affect")
 }
 func client() {
 	logrus.SetFormatter(&logrus.JSONFormatter{TimestampFormat: time.RFC3339Nano})

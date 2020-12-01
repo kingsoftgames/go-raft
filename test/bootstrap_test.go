@@ -65,9 +65,9 @@ func clusterAppBootstrapExpect(t *testing.T, nodeNum int, clientFunc func()) {
 	}
 	for i := 0; i < nodeNum; i++ {
 		yaml := fmt.Sprintf("cache/node%d.yaml", i)
-		genYamlBase(yaml, false, i, true, func(configure *common.Configure) {
+		genYamlBase(yaml, false, i, true, func(configure *app.Configure) {
 			if i == 0 {
-				configure.BootstrapExpect = nodeNum
+				configure.Raft.BootstrapExpect = nodeNum
 				configure.JoinAddr = ""
 			} else {
 				configure.JoinAddr = getJoinAddr(i)
@@ -75,8 +75,8 @@ func clusterAppBootstrapExpect(t *testing.T, nodeNum int, clientFunc func()) {
 		})
 		appNode[i] = app.NewMainApp(app.CreateApp("test"), &exitWait)
 		appNode[i].OnLeaderChg.Add(deal)
-		if rst := appNode[i].Init(yaml); rst != 0 {
-			t.Errorf("appNode%d Init error,%d", i, rst)
+		if err := appNode[i].Init(yaml); err != nil {
+			t.Errorf("appNode%d Init error,%s", i, err.Error())
 			stop()
 			return
 		}
@@ -144,15 +144,15 @@ func clusterAppBootstrapExpectJoinFile(t *testing.T, nodeNum int, clientFunc fun
 		go func(i int) {
 			time.Sleep(time.Duration(rand.Intn(nodeNum*1000)) * time.Millisecond)
 			yaml := fmt.Sprintf("cache/node%d.yaml", i)
-			genYamlBase(yaml, false, i, true, func(configure *common.Configure) {
-				configure.BootstrapExpect = nodeNum
+			genYamlBase(yaml, false, i, true, func(configure *app.Configure) {
+				configure.Raft.BootstrapExpect = nodeNum
 				configure.JoinFile = joinFile
 				configure.JoinAddr = ""
 			})
 			appNode[i] = app.NewMainApp(app.CreateApp("test"), &exitWait)
 			appNode[i].OnLeaderChg.Add(deal)
-			if rst := appNode[i].Init(yaml); rst != 0 {
-				t.Errorf("appNode%d Init error,%d", i, rst)
+			if err := appNode[i].Init(yaml); err != nil {
+				t.Errorf("appNode%d Init error,%s", i, err.Error())
 				stop()
 				return
 			}

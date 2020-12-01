@@ -21,6 +21,11 @@ var (
 	collectorFactory = make(map[string]func(host interface{}) (Collector, error))
 )
 
+type PrometheusConfigure struct {
+	Addr                   string `yaml:"addr" json:"addr" help:"http addr for prometheus" default:":9310"`
+	IncludeExporterMetrics bool   `yaml:"include_exporter_metrics" json:"include_exporter_metrics" help:"if true,include go&process collector"`
+	Namespace              string `yaml:"namespace" json:"namespace" help:"prometheus namespace"`
+}
 type PromCollector struct {
 	CheckWork
 	collectors         map[string]Collector

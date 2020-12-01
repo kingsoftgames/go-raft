@@ -6,8 +6,6 @@ import (
 	"testing"
 	"time"
 
-	"git.shiyou.kingsoft.com/infra/go-raft/app"
-
 	"github.com/sirupsen/logrus"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -34,7 +32,7 @@ func Test_FileWatch(t *testing.T) {
 }
 
 func Test_Help(t *testing.T) {
-	app.RunMain()
+	//app.RunMain()
 }
 
 func Test_Track(t *testing.T) {

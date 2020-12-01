@@ -134,11 +134,11 @@ func (th *GRpcService) Start() error {
 	healthgrpc.RegisterHealthServer(th.GetGrpcServer(), th.health)
 
 	th.goFunc.Go(func() {
-		logrus.Infof("[%s.%s]grpc server %s start", th.mainApp.config.NodeId, th.tag, th.addr)
+		logrus.Infof("[%s.%s]grpc server %s start", th.mainApp.getNodeName(), th.tag, th.addr)
 		if err := th.server.Serve(th.ln); err != nil {
-			logrus.Fatalf("[%s.%s]Start failed %s", th.mainApp.config.NodeId, th.tag, err.Error())
+			logrus.Fatalf("[%s.%s]Start failed %s", th.mainApp.getNodeName(), th.tag, err.Error())
 		}
-		logrus.Infof("[%s.%s]grpc server %s closed", th.mainApp.config.NodeId, th.tag, th.addr)
+		logrus.Infof("[%s.%s]grpc server %s closed", th.mainApp.getNodeName(), th.tag, th.addr)
 	})
 	return nil
 }
@@ -148,13 +148,13 @@ func (th *GRpcService) UpdateClient(client *InnerCon) {
 	}
 	th.client.Store(client)
 	if client != nil {
-		logrus.Debugf("[%s.%s]UpdateClient,%s", th.mainApp.config.NodeId, th.tag, client.addr)
+		logrus.Debugf("[%s.%s]UpdateClient,%s", th.mainApp.getNodeName(), th.tag, client.addr)
 	} else {
-		logrus.Debugf("[%s.%s]UpdateClient,%s", th.mainApp.config.NodeId, th.tag, "")
+		logrus.Debugf("[%s.%s]UpdateClient,%s", th.mainApp.getNodeName(), th.tag, "")
 	}
 }
 func (th *GRpcService) SetHealth(health bool) {
-	logrus.Infof("[%s.%s]SetHealth,%v", th.mainApp.config.NodeId, th.tag, health)
+	logrus.Infof("[%s.%s]SetHealth,%v", th.mainApp.getNodeName(), th.tag, health)
 	if health {
 		th.health.SetServingStatus("", healthgrpc.HealthCheckResponse_SERVING)
 	} else {
@@ -165,8 +165,8 @@ func (th *GRpcService) GetGrpcServer() *grpc.Server {
 	return th.server
 }
 func (th *GRpcService) Stop() {
-	logrus.Infof("[%s.%s]GRpcService.Stop,%s", th.mainApp.config.NodeId, th.tag, th.addr)
-	defer logrus.Infof("[%s.%s]GRpcService.Stop finished,%s", th.mainApp.config.NodeId, th.tag, th.addr)
+	logrus.Infof("[%s.%s]GRpcService.Stop,%s", th.mainApp.getNodeName(), th.tag, th.addr)
+	defer logrus.Infof("[%s.%s]GRpcService.Stop finished,%s", th.mainApp.getNodeName(), th.tag, th.addr)
 	th.server.GracefulStop()
 	th.health.Shutdown()
 }
@@ -175,7 +175,7 @@ func (th *GRpcService) GetInner() *InnerCon {
 	t := time.Now().UnixNano()
 	defer func() {
 		if dif := time.Now().UnixNano() - t; dif > 1e9 {
-			logrus.Errorf("[%s]GetInner[%v]", th.mainApp.config.NodeId, dif)
+			logrus.Errorf("[%s]GetInner[%v]", th.mainApp.getNodeName(), dif)
 		}
 	}()
 	if c := th.client.Load(); c != nil {

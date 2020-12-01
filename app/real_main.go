@@ -1,19 +1,18 @@
 package app
 
 import (
-	"flag"
 	"os"
 	"os/signal"
 	"reflect"
 	"strings"
+	"sync"
+
+	"gopkg.in/alecthomas/kingpin.v2"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
 
 	"github.com/sirupsen/logrus"
 )
-
-var appsNameFlag *string
-var configFile *string
 
 type RealMain struct {
 	apps []*MainApp
@@ -21,28 +20,22 @@ type RealMain struct {
 
 var realMain RealMain
 
-func (th *RealMain) run() {
-	if !flag.Parsed() {
-		flag.Parse()
+// ./team team,match team --cfg=
+func (th *RealMain) run(help string) {
+	flagApp := kingpin.New(os.Args[0], help)
+	appFlags := flagApp.Arg("apps", "").Required().Strings()
+	config := flagApp.Flag("config", "path of config,if config is a dir,will use default app Name as config file").Default("./").ExistingFileOrDir()
+	if cmd, err := flagApp.Parse(os.Args[1:]); err != nil {
+		logrus.Fatal("flag parse err,%s", err.Error())
+	} else {
+		logrus.Infof("run %s", cmd)
 	}
-	if flag.Lookup("help") != nil || flag.Lookup("h") != nil {
-		flag.Usage()
-		os.Exit(0)
-	}
-	logrus.SetOutput(os.Stdout)
 	logrus.Infof("RealMain.Run")
 	appV := make([]IApp, 0)
-	var configV []string = make([]string, 0)
-	configV = append(configV, *configFile)
-	if len(*appsNameFlag) == 0 {
+	if len(*appFlags) == 0 {
 		appV = createAllApp()
 	} else {
-		appSlice := strings.Split(*appsNameFlag, ",")
-		configV = strings.Split(*configFile, ",")
-		if len(appSlice) != len(configV) {
-			logrus.Fatalf("need config file equal app num ")
-		}
-		for _, a := range appSlice {
+		for _, a := range *appFlags {
 			app := CreateApp(a)
 			if app == nil {
 				logrus.Fatalf("not found app %s", a)
@@ -50,33 +43,105 @@ func (th *RealMain) run() {
 			appV = append(appV, app)
 		}
 	}
-	var exitWait common.GracefulExit
-	for i, app := range appV {
-		mainApp := NewMainApp(app, &exitWait)
-		if rst := mainApp.Init(configV[i]); rst != 0 {
-			logrus.Fatalf("Init Failed %s,%d", reflect.TypeOf(app).String(), rst)
-		}
-		mainApp.Start()
-		s := make(chan os.Signal, 1)
-		signal.Notify(s, os.Kill, os.Interrupt)
-		go func(mainApp *MainApp) {
-			select {
-			case _s := <-s:
-				logrus.Infof("recv %s", _s.String())
-				mainApp.Stop()
+	var w sync.WaitGroup
+	for _, app := range appV {
+		w.Add(1)
+		go func(app IApp) {
+			defer func() {
+				w.Done()
+			}()
+			var exitWait common.GracefulExit
+			mainApp := NewMainApp(app, &exitWait)
+			logrus.Infof("Run %s", mainApp.getNS())
+			defer logrus.Infof("Exit %s", mainApp.getNS())
+			if err := mainApp.Init(*config); err != nil {
+				logrus.Fatalf("Init Failed %s,%s", reflect.TypeOf(app).String(), err.Error())
 			}
-		}(mainApp)
-	}
+			mainApp.Start()
+			s := make(chan os.Signal, 1)
+			signal.Notify(s, os.Kill, os.Interrupt)
+			go func(mainApp *MainApp) {
+				select {
+				case _s := <-s:
+					logrus.Infof("recv %s", _s.String())
+					mainApp.Stop()
+				}
+			}(mainApp)
+			exitWait.Wait()
+		}(app)
 
-	exitWait.Wait()
+	}
+	w.Done()
 }
-func RunMain() {
+func RunMain(help string) {
 	defer func() {
 		logrus.Info("RunMain exit")
 	}()
-	realMain.run()
+	//realMain.run(help)
+	appV := createAllApp()
+	if len(appV) == 0 {
+		logrus.Fatal("need register app")
+	}
+	if len(appV) > 1 {
+		logrus.Fatal("only support register one app")
+	}
+	app := appV[0]
+	var exitWait common.GracefulExit
+	mainApp := NewMainApp(app, &exitWait)
+	logrus.Infof("Run %s", mainApp.getNS())
+	defer logrus.Infof("Exit %s", mainApp.getNS())
+	flagApp := kingpin.New(os.Args[0], help)
+	config := flagApp.Flag("config", "config file path").String()
+	appConfig := app.Config()
+	var appConfigFile *string
+	if appConfig != nil {
+		appConfigFile = flagApp.Flag(mainApp.getNS()+"_config", "sub app config file path(if needed)").String()
+	}
+	if err := mainApp.InitFlag(flagApp); err != nil {
+		logrus.Fatalf("InitFlag err %s", err.Error())
+	}
+	if _, err := flagApp.Parse(os.Args[1:]); err != nil {
+		flagApp.Usage(os.Args[1:])
+		logrus.Fatalf("FlagParse err %s", err.Error())
+	}
+	ffts := make([]common.FileFft, 0)
+	ffts = append(ffts, common.NewFileFft(*config, &mainApp.config, ""))
+	if appConfig != nil {
+		ffts = append(ffts, common.NewFileFft(*appConfigFile, appConfig, mainApp.getNS()))
+	}
+	args := make([]string, 0)
+	for _, arg := range os.Args[1:] {
+		//剔除
+		if strings.Contains(arg, "--config") || strings.Contains(arg, "--"+mainApp.getNS()+"_config") {
+			continue
+		}
+		args = append(args, arg)
+	}
+	if err := common.ReadFileAndParseFlagWithArgsSlice(ffts, args); err != nil {
+		logrus.Fatalf("ReadFileAndParseFlagWithArgsSlice err %s", err.Error())
+	}
+
+	if err := mainApp.Init(""); err != nil {
+		logrus.Fatalf("Init Failed %s,%s", reflect.TypeOf(app).String(), err.Error())
+	}
+	mainApp.Start()
+	s := make(chan os.Signal, 1)
+	signal.Notify(s, os.Kill, os.Interrupt)
+	go func(mainApp *MainApp) {
+		select {
+		case _s := <-s:
+			logrus.Infof("recv %s", _s.String())
+			mainApp.Stop()
+		}
+	}(mainApp)
+	exitWait.Wait()
+}
+func RunMainAll(help string) {
+	defer func() {
+		logrus.Infof("RunMainAll exit")
+	}()
+	logrus.Infof("RunMainAll.Run")
 }
 func init() {
-	appsNameFlag = flag.String("apps", "", "run app name ,if null ,run all which register")
-	configFile = flag.String("config", "", "config file path")
+	logrus.SetOutput(os.Stdout)
 }

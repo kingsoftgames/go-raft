@@ -86,7 +86,7 @@ func (th *raftServers) put(id, addr string) {
 }
 
 type RaftStore struct {
-	config *common.Configure
+	config *RaftConfigure
 	l      sync.RWMutex
 	m      StoreType
 
@@ -123,7 +123,7 @@ type RaftStore struct {
 	keyChan      chan *expireKey
 }
 
-func New(config *common.Configure, runChan common.RunChanType, goFunc common.GoFunc) *RaftStore {
+func New(config *RaftConfigure, runChan common.RunChanType, goFunc common.GoFunc) *RaftStore {
 	return &RaftStore{
 		config:   config,
 		m:        make(StoreType),
@@ -139,6 +139,9 @@ func (th *RaftStore) GetMSize() int {
 	defer th.l.RUnlock()
 	return len(th.m)
 }
+func (th *RaftStore) getNodeName() string {
+	return th.config.NodeId
+}
 
 type expireKey struct {
 	k string
@@ -146,7 +149,7 @@ type expireKey struct {
 }
 
 func (th *RaftStore) runExpire() {
-	if th.config.KeyExpire == 0 {
+	if th.config.KeyExpireS == 0 {
 		return
 	}
 	th.expireKey = map[string]int64{}
@@ -163,7 +166,7 @@ func (th *RaftStore) runExpire() {
 			select {
 			case key := <-th.keyChan:
 				if key == nil {
-					logrus.Infof("[%s]runExpire finished", th.config.NodeId)
+					logrus.Infof("[%s]runExpire finished", th.getNodeName())
 					return
 				}
 				if key.r {
@@ -174,11 +177,11 @@ func (th *RaftStore) runExpire() {
 			case <-timerChan:
 				now = time.Now().Unix()
 				cnt++
-				if cnt%uint64(th.config.KeyExpire) == 0 {
+				if cnt%uint64(th.config.KeyExpireS) == 0 {
 					if th.IsLeader() {
 						expireKeys := make([]string, 0)
 						for k, t := range th.expireKey {
-							if now-t > int64(th.config.KeyExpire) {
+							if now-t > int64(th.config.KeyExpireS) {
 								expireKeys = append(expireKeys, k)
 							}
 						}
@@ -215,7 +218,7 @@ func (th *RaftStore) runApply() {
 }
 func (th *RaftStore) applyRun(key string, cmd *inner.ApplyCmd) raft.ApplyFuture {
 	th.liveKey(key, cmd.Cmd == inner.ApplyCmd_DEL)
-	if th.config.DebugConfig.RaftApplyHash {
+	if th.config.RaftApplyHash {
 		hash := common.GetStringSum(key)
 		rsp := &RaftFuture{
 			err: make(chan error),
@@ -331,7 +334,7 @@ func (th *RaftStore) DeleteAsync(key string, fn func(err error, rsp interface{})
 	})
 }
 func (th *RaftStore) Join(nodeId string, addr string) error {
-	logrus.Infof("[%s]Join %s,%s", th.config.NodeId, nodeId, addr)
+	logrus.Infof("[%s]Join %s,%s", th.getNodeName(), nodeId, addr)
 	configFuture := th.raft.GetConfiguration()
 	if err := configFuture.Error(); err != nil {
 		return err
@@ -361,12 +364,12 @@ func (th *RaftStore) Apply(log *raft.Log) interface{} {
 		logrus.Infof("Apply error %s", err.Error())
 		return nil
 	}
-	//logrus.Debugf("[Store][%s]Apply %d", th.config.NodeId, cmd.Cmd)
+	//logrus.Debugf("[Store][%s]Apply %d", th.getNodeName(), cmd.Cmd)
 	switch cmd.Cmd {
 	case inner.ApplyCmd_GET:
 		return th.applyGet(cmd.GetGet())
 	case inner.ApplyCmd_SET:
-		common.Debugf("[Store][%s]Apply Set %s", th.config.NodeId, cmd.GetSet().Key)
+		common.Debugf("[Store][%s]Apply Set %s", th.getNodeName(), cmd.GetSet().Key)
 		return th.applySet(cmd.GetSet())
 	case inner.ApplyCmd_DEL:
 		return th.applyDel(cmd.GetDel())
@@ -391,7 +394,7 @@ func (th *RaftStore) applyDel(obj *inner.ApplyCmd_OpDel) interface{} {
 	return nil
 }
 func (th *RaftStore) Snapshot() (raft.FSMSnapshot, error) {
-	logrus.Infof("[%s]Snapshot", th.config.NodeId)
+	logrus.Infof("[%s]Snapshot", th.getNodeName())
 	th.l.RLock()
 	defer th.l.RUnlock()
 	sf := &storeFsmSnapshot{
@@ -401,7 +404,7 @@ func (th *RaftStore) Snapshot() (raft.FSMSnapshot, error) {
 	return sf, nil
 }
 func (th *RaftStore) Restore(rc io.ReadCloser) error {
-	logrus.Infof("[%s]Restore", th.config.NodeId)
+	logrus.Infof("[%s]Restore", th.getNodeName())
 	o := make(StoreType)
 	if err := common.DecodeFromReader(rc, &o); err != nil {
 		return err
@@ -412,18 +415,18 @@ func (th *RaftStore) Restore(rc io.ReadCloser) error {
 
 func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	config := raft.DefaultConfig()
-	config.LocalID = raft.ServerID(th.config.NodeId)
+	config.LocalID = raft.ServerID(th.getNodeName())
 	config.LogOutput = logOutput
 	config.LogLevel = logLevel
 	config.SnapshotInterval = 100 * time.Second
 	config.ShutdownOnRemove = false
 	//config.SnapshotInterval = 10 * time.Millisecond
-	addr, err := net.ResolveTCPAddr("tcp", th.config.RaftAddr)
+	addr, err := net.ResolveTCPAddr("tcp", th.config.Addr)
 	if err != nil {
 		return err
 	}
 
-	transport, err := raft.NewTCPTransport(th.config.RaftAddr, addr, 3, raftTimeout, logOutput)
+	transport, err := raft.NewTCPTransport(th.config.Addr, addr, 3, raftTimeout, logOutput)
 	if err != nil {
 		return err
 	}
@@ -483,8 +486,8 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 		stableStore = boltDB
 	}
 	//join self
-	th.servers.put(th.config.NodeId, th.config.RaftAddr)
-	if len(th.config.JoinAddr) == 0 && th.config.Bootstrap {
+	th.servers.put(th.getNodeName(), th.config.Addr)
+	if th.config.Bootstrap {
 		hasState, err := raft.HasExistingState(logStore, stableStore, snapshot)
 		if err != nil {
 			return err
@@ -510,16 +513,16 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 }
 func (th *RaftStore) clearStoreCache() {
 	if err := os.RemoveAll(th.config.StoreDir); err != nil {
-		logrus.Errorf("[%s]clearStoreCache,err,%s", th.config.NodeId, err.Error())
+		logrus.Errorf("[%s]clearStoreCache,err,%s", th.getNodeName(), err.Error())
 	} else {
-		logrus.Infof("[%s]clearStoreCache finished", th.config.NodeId)
+		logrus.Infof("[%s]clearStoreCache finished", th.getNodeName())
 	}
 }
 func (th *RaftStore) AddServer(id, addr string) {
 	th.servers.put(id, addr)
 }
 func (th *RaftStore) BootStrap() error {
-	logrus.Infof("[%s]RaftStore,BootStrap", th.config.NodeId)
+	logrus.Infof("[%s]RaftStore,BootStrap", th.getNodeName())
 	return th.raft.BootstrapCluster(raft.Configuration{
 		Servers: th.servers,
 	}).Error()
@@ -542,14 +545,14 @@ func (th *RaftStore) runObserver() {
 				switch obs.Data.(type) {
 				case *raft.RequestVoteRequest:
 					ob := obs.Data.(*raft.RequestVoteRequest)
-					logrus.Infof("[Observer][%s][%d]RequestVoteRequest,%v", th.raft.LastIndex(), th.config.NodeId, *ob)
+					logrus.Infof("[Observer][%s][%d]RequestVoteRequest,%v", th.raft.LastIndex(), th.getNodeName(), *ob)
 				case raft.RaftState:
 					ob := obs.Data.(raft.RaftState)
 					th.eventEmit(&th.OnStateChg, ob)
 					th.setLeader(ob == raft.Leader)
 				case raft.PeerObservation:
 					ob := obs.Data.(raft.PeerObservation)
-					logrus.Infof("[Observer][%s][%d]PeerObservation,%v", th.config.NodeId, th.raft.LastIndex(), ob)
+					logrus.Infof("[Observer][%s][%d]PeerObservation,%v", th.getNodeName(), th.raft.LastIndex(), ob)
 					if ob.Removed {
 						th.peers.Delete(ob.Peer.ID)
 					} else {
@@ -561,22 +564,22 @@ func (th *RaftStore) runObserver() {
 					if !th.IsLeader() { //通知leader的addr
 						th.eventEmit(&th.OnLeaderChg, string(ob.Leader))
 					} else {
-						th.setLeader(string(ob.Leader) == th.config.RaftAddr)
+						th.setLeader(string(ob.Leader) == th.config.Addr)
 					}
-					logrus.Infof("[Observer][%s][%d]LeaderObservation,%s", th.config.NodeId, th.raft.LastIndex(), ob.Leader)
+					logrus.Infof("[Observer][%s][%d]LeaderObservation,%s", th.getNodeName(), th.raft.LastIndex(), ob.Leader)
 				}
 			case leader := <-th.raft.LeaderCh():
-				logrus.Infof("[Observer][%s][%d]Leader,%v", th.config.NodeId, th.raft.LastIndex(), leader)
+				logrus.Infof("[Observer][%s][%d]Leader,%v", th.getNodeName(), th.raft.LastIndex(), leader)
 				th.setLeader(leader)
 			case <-th.exitChan:
-				logrus.Infof("[Observer][%s][%d]Exit", th.config.NodeId, th.raft.LastIndex())
+				logrus.Infof("[Observer][%s][%d]Exit", th.getNodeName(), th.raft.LastIndex())
 				return
 			}
 		}
 	})
 
 	th.statTicker = common.NewTicker(5*time.Second, func() {
-		logrus.Debugf("[%s][%v]%v", th.config.NodeId, th.raft.State(), th.raft.Stats())
+		logrus.Debugf("[%s][%v]%v", th.getNodeName(), th.raft.State(), th.raft.Stats())
 	})
 }
 func (th *RaftStore) eventEmit(ev *common.SafeEvent, arg interface{}) {
@@ -591,7 +594,7 @@ func (th *RaftStore) eventEmit(ev *common.SafeEvent, arg interface{}) {
 
 //非协程安全的
 func (th *RaftStore) setLeader(leader bool) {
-	logrus.Infof("[%s]setLeader,%v,%v", th.config.NodeId, th.leader, leader)
+	logrus.Infof("[%s]setLeader,%v,%v", th.getNodeName(), th.leader, leader)
 	if th.leader != leader {
 		th.leader = leader
 		th.eventEmit(&th.OnLeader, leader)
@@ -648,7 +651,7 @@ func (th *RaftStore) GetNodes() []raft.Server {
 
 func (th *RaftStore) ReloadNode() {
 	nodes := th.GetNodes()
-	logrus.Debugf("[%s]ReloadNode,%v", th.config.NodeId, nodes)
+	logrus.Debugf("[%s]ReloadNode,%v", th.getNodeName(), nodes)
 	for _, node := range nodes {
 		th.peers.Store(node.ID, node.Address)
 	}

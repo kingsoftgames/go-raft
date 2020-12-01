@@ -66,8 +66,8 @@ func (th *httpApi) init(addr string) {
 	})
 }
 func (th *httpApi) close() {
-	logrus.Infof("[%s]httpApi.close", th.mainApp.config.NodeId)
-	defer logrus.Infof("[%s]httpApi.close finished", th.mainApp.config.NodeId)
+	logrus.Infof("[%s]httpApi.close", th.mainApp.getNodeName())
+	defer logrus.Infof("[%s]httpApi.close finished", th.mainApp.getNodeName())
 	if th.srv != nil {
 		if err := th.srv.Close(); err != nil {
 			logrus.Errorf("httpApi.close err,%s", err.Error())

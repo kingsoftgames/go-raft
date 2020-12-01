@@ -22,8 +22,8 @@ type RaftServerGRpc struct {
 }
 
 func (th *RaftServerGRpc) JoinRequest(ctx context.Context, req *inner.JoinReq) (*inner.JoinRsp, error) {
-	logrus.Infof("[API][%s]JoinRequest,%v", th.App.config.NodeId, *req.Info)
-	defer logrus.Debugf("[API][%s]JoinRequest finished,%v", th.App.config.NodeId, *req.Info)
+	logrus.Infof("[API][%s]JoinRequest,%v", th.App.getNodeName(), *req.Info)
+	defer logrus.Debugf("[API][%s]JoinRequest finished,%v", th.App.getNodeName(), *req.Info)
 	f := NewReplyFuturePrioritized(ctx, req, &inner.JoinRsp{})
 	f.cmd = FutureCmdTypeJoin
 	th.App.GRpcHandle(f)
@@ -33,8 +33,8 @@ func (th *RaftServerGRpc) JoinRequest(ctx context.Context, req *inner.JoinReq) (
 	return f.Response().(*inner.JoinRsp), nil
 }
 func (th *RaftServerGRpc) SynMember(ctx context.Context, req *inner.SynMemberReq) (*inner.SynMemberRsp, error) {
-	logrus.Infof("[API][%s]SynMember,%s,%v", th.App.config.NodeId, req.NodeId, req.Mem)
-	defer logrus.Infof("[API][%s]SynMember finished ,%s,%v", th.App.config.NodeId, req.NodeId, req.Mem)
+	logrus.Infof("[API][%s]SynMember,%s,%v", th.App.getNodeName(), req.NodeId, req.Mem)
+	defer logrus.Infof("[API][%s]SynMember finished ,%s,%v", th.App.getNodeName(), req.NodeId, req.Mem)
 	f := NewReplyFuturePrioritized(ctx, req, &inner.SynMemberRsp{})
 	f.cmd = FutureCmdTypeSynMember
 	th.App.GRpcHandle(f)
@@ -57,7 +57,7 @@ func (th *RaftServerGRpc) TransHttpRequest(ctx context.Context, req *inner.Trans
 
 func (th *RaftServerGRpc) TransGrpcRequest(ctx context.Context, req *inner.TransGrpcReq) (rsp *inner.TransGrpcRsp, err error) {
 	if req.Prioritized {
-		logrus.Debugf("[%s][API]TransGrpcRequest,%s,%s", th.App.config.NodeId, req.Hash, req.Name)
+		logrus.Debugf("[%s][API]TransGrpcRequest,%s,%s", th.App.getNodeName(), req.Hash, req.Name)
 		th.App.debug.Store(1)
 	}
 	hd := th.App.handler.GetHandlerValue(req.Name)
@@ -107,9 +107,9 @@ func (th *RaftServerGRpc) TransGrpcRequest(ctx context.Context, req *inner.Trans
 	return
 }
 func (th *RaftServerGRpc) HealthRequest(_ context.Context, req *inner.HealthReq) (*inner.HealthRsp, error) {
-	common.Debugf("[%s]HealthRequest from [%s],%d,%d", th.App.config.NodeId, req.Info.NodeId, req.Info.LastIndex, (time.Now().UnixNano()-req.SendTime)/1e6)
+	common.Debugf("[%s]HealthRequest from [%s],%d,%d", th.App.getNodeName(), req.Info.NodeId, req.Info.LastIndex, (time.Now().UnixNano()-req.SendTime)/1e6)
 	if err := th.App.OnlyJoin(req.Info); err != nil {
-		logrus.Errorf("[%s]HealthRequest,%v", th.App.config.NodeId, *req)
+		logrus.Errorf("[%s]HealthRequest,%v", th.App.getNodeName(), *req)
 	}
 	return &inner.HealthRsp{
 		RecvTime: req.SendTime,
@@ -118,8 +118,8 @@ func (th *RaftServerGRpc) HealthRequest(_ context.Context, req *inner.HealthReq)
 }
 
 func (th *RaftServerGRpc) RemoveMember(ctx context.Context, req *inner.RemoveMemberReq) (*inner.RemoveMemberRsp, error) {
-	logrus.Infof("[API][%s]RemoveMember,%s", th.App.config.NodeId, req.NodeId)
-	//defer logrus.Debugf("[API][%s]RemoveMember finished,%s", th.App.config.NodeId, req.NodeId)
+	logrus.Infof("[API][%s]RemoveMember,%s", th.App.getNodeName(), req.NodeId)
+	//defer logrus.Debugf("[API][%s]RemoveMember finished,%s", th.App.getNodeName(), req.NodeId)
 	f := NewReplyFuturePrioritized(ctx, req, &inner.RemoveMemberRsp{})
 	f.cmd = FutureCmdTypeRemove
 	th.App.GRpcHandle(f)
@@ -129,7 +129,7 @@ func (th *RaftServerGRpc) RemoveMember(ctx context.Context, req *inner.RemoveMem
 	return f.Response().(*inner.RemoveMemberRsp), nil
 }
 func (th *RaftServerGRpc) ExitRequest(ctx context.Context, req *inner.ExitReq) (*inner.ExitRsp, error) {
-	logrus.Infof("[API][%s]ExitRequest,%s", th.App.config.NodeId, req.NodeId)
+	logrus.Infof("[API][%s]ExitRequest,%s", th.App.getNodeName(), req.NodeId)
 	rsp := &inner.ExitRsp{}
 	f := NewReplyFuturePrioritized(ctx, req, rsp)
 	f.cmd = FutureCmdTypeExit
