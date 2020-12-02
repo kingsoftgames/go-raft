@@ -8,7 +8,7 @@ import (
 type DebugConfigure struct {
 	TraceLine       bool `yaml:"trace_line" json:"trace_line" help:"if true,open future trace line log"`
 	PrintIntervalMs int  `yaml:"print_interval_ms" json:"print_interval_ms" help:"print debug log interval ms"`
-	GRpcHandleHash  bool `yaml:"grpc_handle_hash" json:"grpc_handle_hash" help:""`
+	GRpcHandleHash  bool `yaml:"grpc_handle_hash" json:"grpc_handle_hash" help:"" default:"true"`
 }
 
 type Configure struct {
