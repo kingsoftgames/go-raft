@@ -674,9 +674,9 @@ func (th *MainApp) joinMemBoot(info *inner.Member) error {
 func (th *MainApp) joinMem(info *inner.Member) (err error) {
 	logrus.Infof("[%s]joinMem,%s", th.getNodeName(), info.NodeId)
 	if th.store.IsLeader() { //leader
-		if info.Ver < th.config.Ver { //小于当前版本
-			return fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver)
-		}
+		//if info.Ver < th.config.Ver { //小于当前版本
+		//	return fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver)
+		//}
 		if _, err = th.addMem(info); err != nil {
 			return
 		}
@@ -1102,10 +1102,10 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 func (th *MainApp) leaderJoin(f *ReplyFuture) {
 	info := f.req.(*inner.JoinReq).Info
 	logrus.Infof("[%s]leaderJoin,%s", th.getNodeName(), info.NodeId)
-	if info.Ver < th.config.Ver { //小于当前版本
-		f.response(fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver))
-		return
-	}
+	//if info.Ver < th.config.Ver { //小于当前版本
+	//	f.response(fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver))
+	//	return
+	//}
 	if _, err := th.addMem(info); err != nil {
 		f.response(err)
 		return
