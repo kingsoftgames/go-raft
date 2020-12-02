@@ -203,6 +203,9 @@ func (th *RaftStore) closeExpire() {
 	}
 }
 func (th *RaftStore) liveKey(key string, remove bool) {
+	if th.config.KeyExpireS == 0 {
+		return
+	}
 	th.goFunc.Go(func() {
 		th.keyChan <- &expireKey{
 			k: key,
