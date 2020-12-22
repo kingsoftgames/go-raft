@@ -24,7 +24,7 @@ import (
 	"git.shiyou.kingsoft.com/infra/go-raft/app"
 )
 
-var count = 5
+var count = 100
 var timeout = 10 * time.Second
 
 func Test_markSingleAppGRpc(t *testing.T) {
@@ -32,6 +32,8 @@ func Test_markSingleAppGRpc(t *testing.T) {
 	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *app.Configure) {
 	})
 	singleAppTemplate(t, func() {
+		time.Sleep(100 * time.Second)
+
 		c := newClient("127.0.0.1:18310")
 		var w sync.WaitGroup
 		var te common.TimeElapse
@@ -69,56 +71,6 @@ func Test_markClusterAppGRpcLocalTest(t *testing.T) {
 	})
 }
 
-type Test struct {
-	a int
-}
-
-func Test_Go(t *testing.T) {
-	ch := make(chan interface{})
-	e := make(chan struct{})
-	go func() {
-		for {
-			select {
-			case c := <-ch:
-				print(c)
-				time.Sleep(2 * time.Second)
-			case <-e:
-				t.Log("exit")
-			default:
-			}
-		}
-
-	}()
-	go func() {
-		select {
-		case ch <- 1:
-		case <-e:
-			t.Log("exit0")
-		}
-	}()
-	go func() {
-		select {
-		case ch <- 1:
-		case <-e:
-			t.Log("exit1")
-		}
-	}()
-	time.Sleep(time.Second)
-	go func() {
-		close(e)
-	}()
-	time.Sleep(time.Second)
-
-	var exit common.GracefulExit
-	for i := 0; i < 1000000; i++ {
-		var funcGo common.GracefulGoFunc
-		funcGo.UpdateExitWait(&exit)
-		funcGo.Go(func() {
-		})
-		funcGo.WaitGo()
-	}
-
-}
 func Test_RaftSingle_Apply(t *testing.T) {
 	leaderYaml = genYamlBase(leaderYaml, true, 0, true, func(configure *app.Configure) {
 	})
@@ -377,18 +329,18 @@ func httpClient2(t *testing.T, idx int, doneWait *sync.WaitGroup, addr, path str
 func Test_ClusterApp2GRpc(t *testing.T) {
 	genTestClusterApp2GrpcYaml()
 	clusterApp2Template(t, func() {
-		c := []*testGRpcClient{newClient("127.0.0.1:18310"), newClient("127.0.0.1:18311"), newClient("127.0.0.1:18312")}
+		c := []*testGRpcClient{newClient("127.0.0.1:18310")}
 		var w sync.WaitGroup
 
-		for i := 0; i < count; i++ {
+		for i := 0; i < 10000; i++ {
 			w.Add(1)
 			go func(idx int) {
 				defer w.Done()
 				key := strconv.Itoa(rand.Int())
-				runClient(t, c[idx%len(c)], "set", key, 1, false)
-				runClient(t, c[idx%len(c)], "get", key, 1, false)
-				runClient(t, c[idx%len(c)], "del", key, 1, false)
-				runClient(t, c[idx%len(c)], "get", key, 1, false)
+				runClient(t, c[idx%len(c)], "set", key, 1, true)
+				runClient(t, c[idx%len(c)], "del", key, 1, true)
+				runClient(t, c[idx%len(c)], "set", key, 1, true)
+				runClient(t, c[idx%len(c)], "del", key, 1, true)
 			}(i)
 		}
 		w.Wait()

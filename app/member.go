@@ -23,6 +23,7 @@ type Member struct {
 	LastHealthTime int64
 	OverTimeCnt    int32
 	LastIndex      uint64
+	Bootstrap      bool
 }
 
 func (th *Member) Health(health bool) {
@@ -94,8 +95,8 @@ func (th *MemberList) get(nodeId string) *Member {
 	return th.mem[nodeId]
 }
 func (th *MemberList) Get(nodeId string) *Member {
-	logrus.Debugf("[%s]MemberList.Get,%s", th.selfNodeId, nodeId)
-	defer logrus.Debugf("[%s]MemberList.Get finished,%s", th.selfNodeId, nodeId)
+	//logrus.Debugf("[%s]MemberList.Get,%s", th.selfNodeId, nodeId)
+	//defer logrus.Debugf("[%s]MemberList.Get finished,%s", th.selfNodeId, nodeId)
 	th.l.RLock()
 	defer th.l.RUnlock()
 	return th.get(nodeId)
@@ -120,6 +121,10 @@ func (th *MemberList) Add(m *Member) error {
 		return nil
 	}
 	if th.selfNodeId != m.NodeId { //not need connect self node
+		//m.Con = NewInnerGRpcClient(grpcTimeout)
+		//if err := m.Con.Connect(m.InnerAddr, th.selfNodeId); err != nil {
+		//	return err
+		//}
 		m.Con = NewInnerCon(m.InnerAddr, poolMaxConnect, grpcTimeout, th.selfNodeId)
 		//if err := m.Con.Connect(m.GrpcAddr); err != nil {
 		//	return err
@@ -153,7 +158,7 @@ func (th *MemberList) LeaveToAll(nodeId string) {
 	logrus.Debugf("[%s]MemberList.LeaveToAll,%s", th.selfNodeId, nodeId)
 	defer logrus.Debugf("[%s]MemberList.LeaveToAll finished,%s", th.selfNodeId, nodeId)
 	th.Foreach(func(m *Member) {
-		if th.selfNodeId == m.NodeId {
+		if th.selfNodeId == m.NodeId || nodeId == m.NodeId {
 			return
 		}
 		m.Con.GetRaftClient(func(client inner.RaftClient) {
@@ -177,10 +182,8 @@ func (th *MemberList) LeaveToAll(nodeId string) {
 func (th *MemberList) SynMemberToAll(bootstrap bool, bootstrapExpect int) error {
 	ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
 	msg := &inner.SynMemberReq{
-		Bootstrap:       bootstrap,
-		BootstrapExpect: int32(bootstrapExpect),
-		Mem:             make([]*inner.Member, 0),
-		NodeId:          th.selfNodeId,
+		Mem:    make([]*inner.Member, 0),
+		NodeId: th.selfNodeId,
 	}
 	th.Foreach(func(member *Member) {
 		msg.Mem = append(msg.Mem, &inner.Member{
@@ -189,6 +192,7 @@ func (th *MemberList) SynMemberToAll(bootstrap bool, bootstrapExpect int) error 
 			RaftAddr:  member.RaftAddr,
 			Ver:       member.Ver,
 			LastIndex: member.LastIndex,
+			Bootstrap: member.Bootstrap,
 		})
 	})
 	th.Foreach(func(m *Member) {

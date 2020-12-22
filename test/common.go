@@ -7,8 +7,11 @@ import (
 	"math/rand"
 	"os"
 	"strings"
+	"sync"
 	"testing"
 	"time"
+
+	"git.shiyou.kingsoft.com/infra/go-raft/store"
 
 	"gopkg.in/yaml.v2"
 
@@ -35,6 +38,11 @@ var follower2Yaml = "cache/follower2.yaml"
 
 func genYamlBase(name string, bootstrap bool, portShift int, storeInMem bool, cb func(configure *app.Configure)) string {
 	cfg := &app.Configure{}
+	cfg.Raft = new(store.RaftConfigure)
+	cfg.Log = new(common.LogConfigure)
+	cfg.Debug = new(app.DebugConfigure)
+	cfg.Prometheus = new(common.PrometheusConfigure)
+	cfg.Alerter = new(common.AlerterConfigure)
 	cfg.Raft.Addr = fmt.Sprintf("127.0.0.1:%d", 18300+portShift)
 	cfg.GrpcApiAddr = fmt.Sprintf("127.0.0.1:%d", 18310+portShift)
 	cfg.HttpApiAddr = fmt.Sprintf("127.0.0.1:%d", 18320+portShift)
@@ -46,13 +54,19 @@ func genYamlBase(name string, bootstrap bool, portShift int, storeInMem bool, cb
 	if !bootstrap {
 		cfg.JoinAddr = "127.0.0.1:18330"
 	}
+	cfg.HealthCheckIntervalMs = 2000
+	cfg.ConnectTimeoutMs = 1000
+	cfg.RunChanNum = 1000
 	cfg.Raft.NodeId = fmt.Sprintf("n%d", portShift)
 	cfg.Raft.StoreInMem = storeInMem
 	cfg.Raft.StoreDir = "./cache/store/"
+	cfg.Raft.LogCacheCapacity = 1000
 	cfg.Log.MaxSize = 100
 	cfg.Log.MaxAge = 2
-	cfg.Log.Path = "./cache/log"
+	cfg.Log.Path = "stdout"
 	cfg.Log.Level = "DEBUG"
+	cfg.Debug.GRpcHandleHash = true
+	cfg.Debug.PrintIntervalMs = 5000
 	if cb != nil {
 		cb(cfg)
 	}
@@ -142,6 +156,7 @@ func clusterApp2Template(t *testing.T, clientFunc func()) {
 		t.Errorf("appLeader Init error,%s", err.Error())
 		return
 	}
+	var once sync.Once
 	appLeader.GetStore().OnStateChg.Add(func(i interface{}) {
 		if i.(raft.RaftState) == raft.Leader {
 			appFollower := app.NewMainApp(app.CreateApp("test"), &exitWait)
@@ -154,14 +169,18 @@ func clusterApp2Template(t *testing.T, clientFunc func()) {
 					if len(i.(string)) == 0 {
 						return
 					}
-					go func() {
-						n := time.Now().UnixNano()
-						clientFunc()
-						t.Logf("clusterApp2 %f ms", float64(time.Now().UnixNano()-n)/1e6)
-						appLeader.Stop()
-						appFollower.Stop()
-						appFollower2.Stop()
-					}()
+					once.Do(func() {
+						go func() {
+							n := time.Now().UnixNano()
+							clientFunc()
+							t.Logf("clusterApp2 %f ms", float64(time.Now().UnixNano()-n)/1e6)
+							appLeader.PrintQPS()
+							appLeader.Stop()
+							appFollower.Stop()
+							appFollower2.Stop()
+						}()
+					})
+
 				})
 				if err := appFollower2.Init(follower2Yaml); err != nil {
 					t.Errorf("appFollower2 Init error,%s", err.Error())
@@ -181,7 +200,6 @@ func clusterApp2Template(t *testing.T, clientFunc func()) {
 	})
 	appLeader.Start()
 	exitWait.Wait()
-	appLeader.PrintQPS()
 }
 
 type testGRpcClient struct {

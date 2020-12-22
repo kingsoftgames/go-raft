@@ -30,6 +30,7 @@ message Member {
     string innerAddr = 3;
     string ver = 4;
     uint64 lastIndex = 5;
+    bool bootstrap = 6;
 }
 message SynMemberReq {
     repeated Member mem = 1;

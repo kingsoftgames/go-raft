@@ -22,7 +22,7 @@ var (
 )
 
 type PrometheusConfigure struct {
-	Addr                   string `yaml:"addr" json:"addr" help:"http addr for prometheus" default:":9310"`
+	Addr                   string `yaml:"addr" json:"addr" help:"http addr for prometheus"`
 	IncludeExporterMetrics bool   `yaml:"include_exporter_metrics" json:"include_exporter_metrics" help:"if true,include go&process collector"`
 	Namespace              string `yaml:"namespace" json:"namespace" help:"prometheus namespace"`
 }
@@ -100,9 +100,10 @@ func (th *PromCollector) Init(host interface{}, goFunc GoFunc, config *Prometheu
 	goFunc.Go(func() {
 		th.server = &http.Server{Addr: config.Addr, Handler: nil}
 		logrus.Infof("Prometheus http listen %s", config.Addr)
-		if err := th.server.ListenAndServe(); err != nil {
+		if err := th.server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			logrus.Errorf("prometheus listen err %s", err.Error())
 		}
+		logrus.Infof("Prometheus close %s", config.Addr)
 	})
 	return nil
 }

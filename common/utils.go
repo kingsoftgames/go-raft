@@ -46,7 +46,7 @@ func (th *CheckWork) Idle() {
 }
 func GetStack(depth int) string {
 	if !isDebug() {
-		return "call OpenDebugGracefulExit()"
+		return ""
 	}
 	stack := string(debug.Stack())
 	ss := strings.Split(stack, "\n")
@@ -264,6 +264,9 @@ func (th *GracefulGoFunc) PrintGoroutineStack() {
 }
 
 func GoID() int {
+	if !isDebug() {
+		return 0
+	}
 	var buf [64]byte
 	n := runtime.Stack(buf[:], false)
 	idField := strings.Fields(strings.TrimPrefix(string(buf[:n]), "goroutine "))[0]

@@ -18,6 +18,9 @@ func NewTicker(duration time.Duration, cb func()) *Ticker {
 }
 
 func NewTickerWithGo(duration time.Duration, cb func(), goFunc GoFunc) *Ticker {
+	if duration == 0 {
+		return nil
+	}
 	ticker := &Ticker{
 		exit: make(chan struct{}),
 	}
@@ -49,6 +52,9 @@ func NewTimer(duration time.Duration, cb func()) *Timer {
 	return NewTimerWithGo(duration, cb, &DefaultGoFunc{})
 }
 func NewTimerWithGo(duration time.Duration, cb func(), goFunc GoFunc) *Timer {
+	if duration == 0 {
+		return nil
+	}
 	timer := &Timer{
 		exit: make(chan struct{}),
 	}

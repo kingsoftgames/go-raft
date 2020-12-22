@@ -6,6 +6,7 @@ import (
 	"reflect"
 	"strings"
 	"sync"
+	"syscall"
 
 	"gopkg.in/alecthomas/kingpin.v2"
 
@@ -126,7 +127,7 @@ func RunMain(help string) {
 	}
 	mainApp.Start()
 	s := make(chan os.Signal, 1)
-	signal.Notify(s, os.Kill, os.Interrupt)
+	signal.Notify(s, os.Interrupt, syscall.SIGTERM)
 	go func(mainApp *MainApp) {
 		select {
 		case _s := <-s:

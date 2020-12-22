@@ -114,7 +114,7 @@ type MainApp struct {
 
 	isBoot atomic.Value
 
-	updateTimer *common.Timer
+	updateTimer *common.Ticker
 
 	stopChan      chan struct{}
 	stopOtherChan chan struct{}
@@ -138,7 +138,7 @@ type MainApp struct {
 func NewMainApp(app IApp, exitWait *common.GracefulExit) *MainApp {
 	mainApp := &MainApp{
 		app:                 app,
-		grpcChan:            make(chan *ReplyFuture, 1024),
+		grpcChan:            make(chan *ReplyFuture, 1),
 		grpcPrioritizedChan: make(chan *ReplyFuture, 64),
 		otherChan:           make(chan *ReplyFuture, 16),
 		sig:                 make(chan struct{}, 1),
@@ -204,8 +204,14 @@ func (th *MainApp) InitWithArgs(configPath string, args []string) error {
 		if fileInfo.IsDir() {
 			configPath += fmt.Sprintf("%s.yml", th.getNS())
 		}
-		if err := common.ReadFileAndParseFlagWithArgs(configPath, &th.config, args); err != nil {
-			return err
+		if args == nil {
+			if err := common.UnmarshalFFT(configPath, &th.config); err != nil {
+				return err
+			}
+		} else {
+			if err := common.ReadFileAndParseFlagWithArgs(configPath, &th.config, args); err != nil {
+				return err
+			}
 		}
 	}
 	if err := th.checkCfg(); err != nil {
@@ -226,11 +232,8 @@ func (th *MainApp) InitWithArgs(configPath string, args []string) error {
 	th.store = store.New(th.config.Raft, nil, th)
 	th.store.OnLeader.Add(func(i interface{}) {
 		if i.(bool) {
-			th.startUpdateTime()
 			th.onChgToLeader()
 			th.updateLeaderClient(nil)
-		} else {
-			th.stopUpdateTime()
 		}
 		th.app.OnLeader(i.(bool))
 	})
@@ -319,8 +322,20 @@ func (th *MainApp) InitWithArgs(configPath string, args []string) error {
 	logrus.Infof("[%s]Init finished[%s][%d]", th.getNodeName(), VER, os.Getpid())
 	return nil
 }
+func isTest() bool {
+	for _, arg := range os.Args {
+		if strings.Contains(arg, "test.v") {
+			return true
+		}
+	}
+	return false
+}
 func (th *MainApp) Init(configPath string) error {
-	return th.InitWithArgs(configPath, os.Args)
+	args := os.Args
+	if isTest() {
+		args = nil
+	}
+	return th.InitWithArgs(configPath, args)
 }
 func (th *MainApp) InitFlag(flag common.FlagClause) error {
 	appConfig := th.app.Config()
@@ -336,9 +351,11 @@ func (th *MainApp) getNodeName() string {
 }
 func (th *MainApp) initDebugConfig() {
 	DebugTraceFutureLine = th.config.Debug.TraceLine
+	if th.config.Debug.EnableGoTrace {
+		common.OpenDebugGracefulExit()
+	}
 	if th.config.Debug.PrintIntervalMs > 0 {
 		logrus.Infof("[%s]initDebugConfig", th.getNodeName())
-		common.OpenDebugGracefulExit()
 		var cnt, t int64
 		common.NewTicker(time.Duration(th.config.Debug.PrintIntervalMs)*time.Millisecond, func() {
 			//logrus.Infof("[%s]%s", th.getNodeName(), GetFutureAve())
@@ -427,7 +444,13 @@ func (th *MainApp) GRpcHandle(f *ReplyFuture) {
 				if f.prioritized {
 					th.grpcPrioritizedChan <- f
 				} else {
-					th.grpcChan <- f
+					after := time.After(futureRspTimeout - time.Second)
+					select {
+					case <-after:
+						logrus.Warnf("GRpcHandle timeout")
+						f.response(errTimeout)
+					case th.grpcChan <- f:
+					}
 				}
 			default:
 				if f.cnt > 1 {
@@ -460,6 +483,7 @@ func (th *MainApp) Start() {
 		th.runLogic.Start()
 	})
 	th.watch.Start()
+	th.startUpdateTime()
 }
 func (th *MainApp) gracefulShutdown() {
 	if s := th.stopped.Load(); s != nil && s.(bool) {
@@ -532,14 +556,41 @@ func (th *MainApp) initHttpApi() {
 	th.http = newHttpApi(th)
 	th.http.init(th.config.HttpApiAddr)
 }
-func (th *MainApp) NewTimer(duration time.Duration, cb func()) *common.Timer {
+func (th *MainApp) newTimer(duration time.Duration, cb func()) *common.Timer {
 	return common.NewTimer(duration, func() {
 		th.innerLogic.HandleNoHash(0, func(err error) {
-			if err != nil {
+			if err == nil {
 				cb()
 			}
 		})
 	})
+}
+func (th *MainApp) newTicker(duration time.Duration, cb func()) *common.Ticker {
+	return common.NewTicker(duration, func() {
+		th.innerLogic.HandleNoHash(0, func(err error) {
+			if err == nil {
+				cb()
+			}
+		})
+	})
+}
+func (th *MainApp) NewTimerWithHash(duration time.Duration, cb func(), hash string) *common.Timer {
+	return common.NewTimerWithGo(duration, func() {
+		th.runLogic.HandleWithHash(hash, 0, func(err error) {
+			if err == nil {
+				cb()
+			}
+		})
+	}, th)
+}
+func (th *MainApp) NewTickerWithHash(duration time.Duration, cb func(), hash string) *common.Ticker {
+	return common.NewTickerWithGo(duration, func() {
+		th.runLogic.HandleWithHash(hash, 0, func(err error) {
+			if err == nil {
+				cb()
+			}
+		})
+	}, th)
 }
 func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 	if tryCnt == nil {
@@ -578,6 +629,7 @@ func (th *MainApp) tryConnect(addr string, tryCnt *int, rstChan chan int) {
 			RaftAddr:  th.config.Raft.Addr,
 			InnerAddr: th.config.InnerAddr,
 			Ver:       th.config.Ver,
+			Bootstrap: th.isBoot.Load().(bool),
 		},
 	}); err != nil {
 		logrus.Errorf("[%s]JoinRequest error,%s,%s", th.getNodeName(), addr, err.Error())
@@ -630,6 +682,7 @@ func (th *MainApp) joinSelf() {
 		RaftAddr:  th.config.Raft.Addr,
 		InnerAddr: th.config.InnerAddr,
 		Ver:       th.config.Ver,
+		Bootstrap: th.isBoot.Load().(bool),
 	})
 	th.updateLatestVersion(th.config.Ver)
 }
@@ -646,8 +699,40 @@ func (th *MainApp) OnlyJoin(info *inner.Member) error {
 		InnerAddr: info.InnerAddr,
 		Ver:       info.Ver,
 		LastIndex: info.LastIndex,
+		Bootstrap: info.Bootstrap,
 	})
 }
+
+func (th *MainApp) bootStrap() error {
+	isBoot := th.isBoot.Load().(bool)
+	logrus.Infof("[%s]bootStrap,%v,%d", th.getNodeName(), isBoot, th.members.Len())
+	if isBoot {
+		return nil
+	}
+	if th.config.Raft.BootstrapExpect > 0 && th.members.Len() >= th.config.Raft.BootstrapExpect {
+		isBoot := false
+		th.members.Foreach(func(member *Member) {
+			if member.Bootstrap {
+				isBoot = true
+			}
+		})
+		if isBoot {
+			logrus.Infof("[%s]bootStrap already bootstrap", th.getNodeName())
+			return nil
+		}
+		th.members.Foreach(func(member *Member) {
+			th.GetStore().AddServer(member.NodeId, member.RaftAddr)
+		})
+		//开始选举
+		if err := th.GetStore().BootStrap(); err != nil {
+			logrus.Errorf("[%s] BootStrap,err,%s", th.getNodeName(), err.Error())
+			return err
+		}
+	}
+	return nil
+}
+
+//join before boot
 func (th *MainApp) joinMemBoot(info *inner.Member) error {
 	if r, err := th.addMem(info); r {
 		return err
@@ -658,16 +743,7 @@ func (th *MainApp) joinMemBoot(info *inner.Member) error {
 		}
 	} else {
 		logrus.Infof("[%s]Join,len(%d)", th.getNodeName(), th.members.Len())
-		if th.config.Raft.BootstrapExpect > 0 && th.members.Len() >= th.config.Raft.BootstrapExpect {
-			th.members.Foreach(func(member *Member) {
-				th.GetStore().AddServer(member.NodeId, member.RaftAddr)
-			})
-			//开始选举
-			if err := th.GetStore().BootStrap(); err != nil {
-				logrus.Errorf("[%s] BootStrap,err,%s", th.getNodeName(), err.Error())
-				return err
-			}
-		}
+		return th.bootStrap()
 	}
 	return nil
 }
@@ -701,6 +777,7 @@ func (th *MainApp) joinMem(info *inner.Member) (err error) {
 						RaftAddr:  info.RaftAddr,
 						InnerAddr: info.InnerAddr,
 						Ver:       info.Ver,
+						Bootstrap: th.isBoot.Load().(bool),
 					},
 				}); _err != nil {
 					err = _err
@@ -729,6 +806,7 @@ func (th *MainApp) addMem(info *inner.Member) (bool, error) {
 		RaftAddr:  info.RaftAddr,
 		InnerAddr: info.InnerAddr,
 		Ver:       info.Ver,
+		Bootstrap: info.Bootstrap,
 	}); err != nil {
 		return true, err
 	}
@@ -753,14 +831,14 @@ func (th *MainApp) stopHealthTicker() {
 	}
 }
 func (th *MainApp) healthTicker() {
-	th.healthTick = common.NewTicker(healthInterval, func() {
+	th.healthTick = common.NewTicker(time.Duration(th.config.HealthCheckIntervalMs)*time.Millisecond, func() {
 		a := th
 		a.members.Foreach(func(member *Member) {
 			if member.Con != nil {
 				th.Go(func() {
 					member.Con.GetRaftClient(func(client inner.RaftClient) {
 						if client != nil {
-							ctx, _ := context.WithTimeout(context.Background(), grpcTimeout)
+							ctx, _ := context.WithTimeout(context.Background(), 2*time.Second)
 							_, err := client.HealthRequest(ctx, &inner.HealthReq{
 								Info: &inner.Member{
 									NodeId:    th.getNodeName(),
@@ -768,6 +846,7 @@ func (th *MainApp) healthTicker() {
 									InnerAddr: th.config.InnerAddr,
 									Ver:       th.config.Ver,
 									LastIndex: th.store.GetRaft().LastIndex(),
+									Bootstrap: th.isBoot.Load().(bool),
 								},
 								SendTime: time.Now().UnixNano(),
 							})
@@ -844,6 +923,53 @@ func (th *MainApp) watchJoinFile() {
 	}
 }
 
+//检测成员节点是否超时判断为dead
+func (th *MainApp) checkMemDead() {
+	if th.config.CleanDeadServerS == 0 {
+		return
+	}
+	th.members.Foreach(func(member *Member) {
+		if member.LastHealthTime > 0 && time.Now().Unix()-member.LastHealthTime > int64(th.config.CleanDeadServerS) {
+			logrus.Infof("[%s]checkMemDead remove %s,%s,%s", th.getNodeName(), member.NodeId, member.InnerAddr, member.RaftAddr)
+			if th.store.IsLeader() {
+				th.removeServer(member.NodeId)
+			} else {
+				th.members.Remove(member.NodeId)
+			}
+		}
+	})
+}
+
+//检测mem和raft node是否匹配，是否删减
+func (th *MainApp) checkNodes() {
+	if !th.store.IsLeader() {
+		return
+	}
+	nodes := th.GetStore().GetNodes()
+	find := func(id string) bool {
+		for _, n := range nodes {
+			if n.ID == raft.ServerID(id) {
+				return true
+			}
+		}
+		return false
+	}
+	th.members.Foreach(func(member *Member) {
+		if !find(member.NodeId) {
+			if err := th.GetStore().Join(member.NodeId, member.RaftAddr); err != nil {
+				logrus.Errorf("[%s]checkNodes Join err,%s,%s,%s", th.getNodeName(), member.NodeId, member.RaftAddr, err.Error())
+			} else {
+				logrus.Infof("[%s]checkNodes Join success,%s,%s,%s", th.getNodeName(), member.NodeId, member.RaftAddr)
+			}
+		}
+	})
+	for _, n := range nodes {
+		if m := th.members.Get(string(n.ID)); m == nil {
+			logrus.Infof("[%s]checkNodes remove,%s,%s", th.getNodeName(), n.ID, n.Address)
+			th.removeServer(string(n.ID))
+		}
+	}
+}
 func (th *MainApp) checkUpdate() {
 	if !th.store.IsLeader() {
 		return
@@ -878,12 +1004,23 @@ func (th *MainApp) checkUpdate() {
 		}
 	}
 	th.checkRemoveOldVersionNode()
-	th.updateTimer = nil
-	th.startUpdateTime()
 }
 func (th *MainApp) transferLeader(newLeader *raft.Server) (err error) {
 	logrus.Infof("[%s]transferLeader", th.getNodeName())
 	if th.store.GetRaft().State() == raft.Leader {
+		checkVoter := func() bool {
+			nodes := th.store.GetNodes()
+			for _, n := range nodes {
+				if th.getNodeName() != string(n.ID) && n.Suffrage == raft.Voter {
+					return true
+				}
+			}
+			return false
+		}
+		if !checkVoter() {
+			logrus.Infof("[%s]transferLeader only one leader not has voter", th.getNodeName())
+			return nil
+		}
 		if err = th.store.GetRaft().DemoteVoter(raft.ServerID(th.getNodeName()), 0, 0).Error(); err == nil {
 			//if newLeader != nil {
 			//	if err = th.store.GetRaft().LeadershipTransferToServer(newLeader.ID, newLeader.Address).Error(); err != nil {
@@ -902,8 +1039,9 @@ func (th *MainApp) transferLeader(newLeader *raft.Server) (err error) {
 }
 func (th *MainApp) startUpdateTime() {
 	if th.updateTimer == nil {
-		th.updateTimer = th.NewTimer(updateTimeout, func() {
-			th.checkUpdate()
+		th.updateTimer = th.newTicker(updateTimeout, func() {
+			th.checkMemDead()
+			th.checkNodes()
 		})
 	}
 }
@@ -969,8 +1107,11 @@ func (th *MainApp) leaderGRpc(f *ReplyFuture) {
 		logrus.Warnf("[%s]leaderGRpc,%v", th.getNodeName(), f.req)
 	}
 	h := func(err error) {
+		//t := time.Now()
+		//logrus.Debugf("leaderGRpcHandle %d", time.Now().Sub(t).Milliseconds())
 		if err != nil {
 			logrus.Warnf("[%s]leaderGRpcHandle,err,%s,%v", th.getNodeName(), err.Error(), f.req)
+			//logrus.Infof("%v", th.runLogic.GetQPS())
 			f.response(err)
 			return
 		}
@@ -1038,7 +1179,7 @@ func (th *MainApp) followerGRpc(f *ReplyFuture, con *InnerCon) {
 		f.response(errTransfer)
 		return
 	}
-	logrus.Debugf("[%s]followerGRpc,%d,%v", th.getNodeName(), f.cnt, f.req)
+	//logrus.Debugf("[%s]followerGRpc,%d,%v", th.getNodeName(), f.cnt, f.req)
 	t := time.Now().UnixNano()
 	defer func() {
 		if dif := time.Now().UnixNano() - t; dif > 1e9 {
@@ -1106,6 +1247,10 @@ func (th *MainApp) leaderJoin(f *ReplyFuture) {
 	//	f.response(fmt.Errorf("member can not less than cur version(%s < %s)", info.Ver, th.config.Ver))
 	//	return
 	//}
+	if mem := th.members.Get(info.NodeId); mem != nil && (mem.RaftAddr != info.RaftAddr || mem.InnerAddr != info.InnerAddr) {
+		logrus.Infof("[%s]leaderJoin replace mem,%v,%v", th.getNodeName(), *mem, *info)
+		th.removeServer(info.NodeId)
+	}
 	if _, err := th.addMem(info); err != nil {
 		f.response(err)
 		return
@@ -1134,6 +1279,7 @@ func (th *MainApp) followJoin(f *ReplyFuture) {
 				InnerAddr: th.config.InnerAddr,
 				Ver:       th.config.Ver,
 				LastIndex: th.store.GetRaft().LastIndex(),
+				Bootstrap: th.isBoot.Load().(bool),
 			}
 			f.response(nil)
 			return
@@ -1153,6 +1299,7 @@ func (th *MainApp) followJoin(f *ReplyFuture) {
 						RaftAddr:  info.RaftAddr,
 						InnerAddr: info.InnerAddr,
 						Ver:       info.Ver,
+						Bootstrap: info.Bootstrap,
 					},
 				})
 				if err == nil {
@@ -1171,20 +1318,11 @@ func (th *MainApp) followJoin(f *ReplyFuture) {
 			return
 		}
 		logrus.Infof("[%s]Join,len(%d)", th.getNodeName(), th.members.Len())
-		if th.config.Raft.BootstrapExpect > 0 && th.members.Len() >= th.config.Raft.BootstrapExpect {
-			th.members.Foreach(func(member *Member) {
-				th.GetStore().AddServer(member.NodeId, member.RaftAddr)
-			})
-			//开始选举
-			if err := th.GetStore().BootStrap(); err != nil {
-				logrus.Errorf("[%s] BootStrap,err,%s", th.getNodeName(), err.Error())
-				if err == raft.ErrCantBootstrap {
-					th.GRpcHandle(f)
-				} else {
-					f.response(err)
-				}
+		if err := th.bootStrap(); err != nil {
+			if err == raft.ErrCantBootstrap {
+				th.GRpcHandlePrioritize(f)
 			} else {
-				f.response(nil)
+				f.response(err)
 			}
 		} else {
 			f.response(nil)
@@ -1303,9 +1441,6 @@ func (th *MainApp) allSynMember(f *ReplyFuture) {
 	req := f.req.(*inner.SynMemberReq)
 	logrus.Infof("[%s]allSynMember,%d,%v,%v", th.getNodeName(), req.BootstrapExpect, req.Bootstrap, req.Mem)
 	defer logrus.Infof("[%s]allSynMember finished,%d,%v,%v", th.getNodeName(), req.BootstrapExpect, req.Bootstrap, req.Mem)
-
-	th.config.Raft.Bootstrap = req.Bootstrap
-	th.config.Raft.BootstrapExpect = int(req.BootstrapExpect)
 	for _, m := range req.Mem {
 		mem := th.members.Get(m.NodeId)
 		if mem != nil {
@@ -1317,6 +1452,7 @@ func (th *MainApp) allSynMember(f *ReplyFuture) {
 			InnerAddr: m.InnerAddr,
 			Ver:       m.Ver,
 			LastIndex: m.LastIndex,
+			Bootstrap: m.Bootstrap,
 		}); err != nil {
 			logrus.Errorf("[%s]allSynMember,Add,error,%s,%s", th.getNodeName(), m.NodeId, err.Error())
 		}
@@ -1422,8 +1558,10 @@ func (th *MainApp) runGRpcRequest() {
 			if con := th.inner.GetLastInner(); con != nil {
 				select {
 				case f := <-th.grpcPrioritizedChan:
+					logrus.Debugf("[%s]followerGRpc grpcPrioritizedChan %d", th.getNodeName(), len(th.grpcPrioritizedChan))
 					th.followerGRpc(f, con)
 				case f := <-th.grpcChan:
+					logrus.Debugf("[%s]followerGRpc grpcChan %d", th.getNodeName(), len(th.grpcChan))
 					th.followerGRpc(f, con)
 				case <-th.stopChan:
 					stopFunc()

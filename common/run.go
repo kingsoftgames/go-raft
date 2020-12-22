@@ -44,17 +44,23 @@ func (th *LogicChan) Get() RunChanType {
 	return th.runChan[0]
 }
 func (th *LogicChan) HandleNoHash(timeout time.Duration, h func(err error)) {
+
 	th.Handle(0, timeout, h)
 }
-func GetStringSum(hash string) int {
+func GetStringSum(hash string) (h int) {
 	hs := fnv.New32()
 	_, _ = hs.Write([]byte(hash))
-	return int(hs.Sum32())
+	h = int(hs.Sum32())
+	return
 }
 func (th *LogicChan) HandleWithHash(hash string, timeout time.Duration, h func(err error)) {
 	th.Handle(GetStringSum(hash), timeout, h)
 }
 func (th *LogicChan) Handle(hash int, timeout time.Duration, h func(err error)) {
+	if th.Stopped() {
+		logrus.Warnf("Handle when stopped")
+		return
+	}
 	var timer <-chan time.Time
 	if timeout > 0 {
 		timer = time.After(timeout)
@@ -93,9 +99,9 @@ func (th *LogicChan) Start() {
 				select {
 				case f := <-th.runChan[idx]:
 					deal := func(fn func()) {
-						n := time.Now().UnixNano() / 1e3
+						n := time.Now()
 						fn()
-						atomic.AddInt64(&th.qps[idx].TotalTime, (time.Now().UnixNano()/1e3)-n)
+						atomic.AddInt64(&th.qps[idx].TotalTime, time.Now().Sub(n).Microseconds())
 						atomic.AddInt64(&th.qps[idx].Cnt, 1)
 					}
 					deal(f)
@@ -126,11 +132,11 @@ func (th *LogicChan) GetQPS() []string {
 			cnt += _cnt
 			totalTime += _totalTime
 			q += 1e6 / (_totalTime / _cnt)
-			info[i] = fmt.Sprintf("chan(%d) call %d,totaltime %d,per %d nans,qps=%d", i, _cnt, _totalTime, _totalTime/_cnt, 1e6/(_totalTime/_cnt))
+			info[i] = fmt.Sprintf("chan(%d) call %d,totaltime %d,per %d mic,qps=%d", i, _cnt, _totalTime, _totalTime/_cnt, 1e6/(_totalTime/_cnt))
 		}
 	}
 	if cnt > 0 && totalTime > 0 {
-		info[len(th.qps)] = fmt.Sprintf("total call %d,totaltime %d,per %d nans,qps=%d", cnt, totalTime, totalTime/cnt, q)
+		info[len(th.qps)] = fmt.Sprintf("total call %d,totaltime %d,per %d mic,qps=%d", cnt, totalTime, totalTime/cnt, q)
 	}
 	return info
 }
