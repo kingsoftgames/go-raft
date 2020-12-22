@@ -2,16 +2,11 @@ package store
 
 import (
 	"fmt"
-	"os"
-	"path/filepath"
-	"strings"
 	"sync"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
 
 	"github.com/sirupsen/logrus"
-
-	raftboltdb "github.com/hashicorp/raft-boltdb"
 
 	"github.com/hashicorp/raft"
 )
@@ -22,7 +17,7 @@ type LogStoreCache struct {
 	highIndex uint64
 	cache     []*raft.Log
 	capacity  int
-	store     *raftboltdb.BoltStore
+	store     raft.LogStore
 
 	l          sync.RWMutex
 	firstIndex uint64
@@ -37,31 +32,21 @@ func OpenLogStoreDebugCrash() {
 	debugCrash = true
 }
 
-func NewLogStoreCache(capacity int, path string) (*LogStoreCache, error) {
+func NewLogStoreCache(capacity int, store raft.LogStore) (*LogStoreCache, error) {
 	if capacity <= 0 {
 		return nil, fmt.Errorf("capacity must be positive")
 	}
-	if err := os.MkdirAll(path, 744); err != nil && !os.IsExist(err) {
-		return nil, fmt.Errorf("logStoreCache path not accessible: %v", err)
-	}
-	btDB, err := raftboltdb.NewBoltStore(filepath.Join(path, "log.db"))
-	if err != nil {
-		return nil, err
-	}
+
 	c := &LogStoreCache{
-		store:    btDB,
+		store:    store,
 		capacity: capacity,
 		cache:    make([]*raft.Log, capacity),
 	}
-	if common.IsOpenDebugLog() {
-		paths := strings.Split(path, "\\")
-		c.name = paths[len(paths)-1]
-	}
-
-	if c.firstIndex, err = btDB.FirstIndex(); err != nil {
+	var err error
+	if c.firstIndex, err = store.FirstIndex(); err != nil {
 		return nil, err
 	}
-	if c.lastIndex, err = btDB.LastIndex(); err != nil {
+	if c.lastIndex, err = store.LastIndex(); err != nil {
 		return nil, err
 	}
 	return c, nil
@@ -92,10 +77,10 @@ func (th *LogStoreCache) StoreLog(log *raft.Log) error {
 func (th *LogStoreCache) StoreLogs(logs []*raft.Log) error {
 	th.l.Lock()
 	defer th.l.Unlock()
-	common.Debugf("[%s]StoreLogs,curIdx:%d,lowIdx:%d,highIdx:%d,firstIdx:%d,lastIdx:%d", th.name, th.curIdx, th.lowIndex, th.highIndex, th.firstIndex, th.lastIndex)
-	for i, l := range logs {
-		common.Debugf("[%s]StoreLogs[%d],%d,%d,%d", th.name, i, l.Index, l.Term, l.Type)
-	}
+	//logrus.Debugf("[%s]StoreLogs,curIdx:%d,lowIdx:%d,highIdx:%d,firstIdx:%d,lastIdx:%d", th.name, th.curIdx, th.lowIndex, th.highIndex, th.firstIndex, th.lastIndex)
+	//for i, l := range logs {
+	//	logrus.Debugf("[%s]StoreLogs[%d],%d,%d,%d", th.name, i, l.Index, l.Term, l.Type)
+	//}
 	for _, l := range logs {
 		th.cache[th.curIdx] = l
 		th.curIdx++
@@ -169,8 +154,6 @@ func (th *LogStoreCache) Close() {
 		if !debugCrash {
 			th.flushToDB()
 		}
-		if err := th.store.Close(); err != nil {
-			logrus.Errorf("store.Close,err,%s", err.Error())
-		}
+		th.store = nil
 	}
 }

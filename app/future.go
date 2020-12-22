@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/sirupsen/logrus"
@@ -34,6 +35,13 @@ type TraceFutureInfo struct {
 	cnt      int32
 }
 
+func (th *TraceFutureInfo) clearTrace() {
+	if !DebugTraceFutureLine {
+		return
+	}
+	th.Timeline = nil
+	th.cnt = 0
+}
 func (th *TraceFutureInfo) AddTimeLine(tag string) {
 	if !DebugTraceFutureLine {
 		return
@@ -87,6 +95,20 @@ type ReplyFuture struct {
 	TraceFutureInfo
 }
 
+func (th *ReplyFuture) clear() {
+	th.ctx = nil
+	th.req = nil
+	th.responsed = false
+	th.e = nil
+	th.rsp = nil
+	th.rspFuture.Clear()
+	th.prioritized = false
+	th.trans = false
+	th.cmd = FutureCmdTypeGRpc
+	th.cnt = 0
+	th.clearTrace()
+}
+
 func (th *ReplyFuture) response(err error) {
 	th.err <- err
 }
@@ -118,14 +140,39 @@ func (th *ReplyFuture) Response() interface{} {
 	return th.rsp
 }
 
-func NewReplyFuture(ctx context.Context, req, rsp interface{}) *ReplyFuture {
-	return &ReplyFuture{
-		ctx:       ctx,
-		req:       req,
-		responsed: false,
-		err:       make(chan error),
-		rsp:       rsp,
+var futurePool *sync.Pool
+var alloc, put uint64
+
+func PutReplyFuture(f *ReplyFuture) {
+	if futurePool != nil {
+		f.clear()
+		futurePool.Put(f)
+		atomic.AddUint64(&put, 1)
 	}
+}
+func NewReplyFuture(ctx context.Context, req, rsp interface{}) *ReplyFuture {
+	if futurePool == nil {
+		futurePool = &sync.Pool{
+			New: func() interface{} {
+				atomic.AddUint64(&alloc, 1)
+				return &ReplyFuture{}
+			},
+		}
+	}
+	f := futurePool.Get().(*ReplyFuture)
+	f.ctx = ctx
+	f.req = req
+	f.responsed = false
+	f.err = make(chan error)
+	f.rsp = rsp
+	return f
+	//return &ReplyFuture{
+	//	ctx:       ctx,
+	//	req:       req,
+	//	responsed: false,
+	//	err:       make(chan error),
+	//	rsp:       rsp,
+	//}
 }
 func NewReplyFuturePrioritized(ctx context.Context, req, rsp interface{}) *ReplyFuture {
 	f := NewReplyFuture(ctx, req, rsp)

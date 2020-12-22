@@ -2,13 +2,17 @@ package test
 
 import (
 	"fmt"
+	"io"
 	"io/ioutil"
 	"math/rand"
+	"net"
 	"os"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/hashicorp/raft"
 
 	"git.shiyou.kingsoft.com/infra/go-raft/app"
 	"git.shiyou.kingsoft.com/infra/go-raft/common"
@@ -174,4 +178,110 @@ func Test_bootstrapExpectJoinFile(t *testing.T) {
 		t.Logf("Test_bootstrapExpectJoinFile Ok")
 		time.Sleep(3 * time.Second)
 	})
+}
+
+type fsmTest struct {
+}
+
+func (th *fsmTest) Apply(l *raft.Log) interface{} {
+	return nil
+}
+func (th *fsmTest) Snapshot() (raft.FSMSnapshot, error) {
+	return nil, nil
+}
+func (th *fsmTest) Restore(io.ReadCloser) error {
+	return nil
+}
+func Test_bootstrapConflict(t *testing.T) {
+	var ras []*raft.Raft = make([]*raft.Raft, 0)
+	var configuration raft.Configuration
+	configuration.Servers = make([]raft.Server, 0)
+	for i := 0; i < 3; i++ {
+		config := raft.DefaultConfig()
+		config.LogOutput = os.Stdout
+		config.LocalID = raft.ServerID(fmt.Sprintf("n%d", i))
+		config.SnapshotInterval = 100 * time.Second
+		config.ShutdownOnRemove = false
+		config.MaxAppendEntries = 1000
+		logStore := raft.NewInmemStore()
+		stableStore := raft.NewInmemStore()
+		snapshot := raft.NewInmemSnapshotStore()
+		ip := fmt.Sprintf("127.0.0.1:1111%d", i)
+		addr, _ := net.ResolveTCPAddr("tcp", ip)
+		transport, _ := raft.NewTCPTransport(ip, addr, 3, 4*time.Second, os.Stdout)
+		ra1, _ := raft.NewRaft(config, &fsmTest{}, logStore, stableStore, snapshot, transport)
+		ras = append(ras, ra1)
+		configuration.Servers = append(configuration.Servers, raft.Server{
+			ID:      config.LocalID,
+			Address: raft.ServerAddress(ip),
+		})
+	}
+	if err := ras[0].BootstrapCluster(configuration).Error(); err != nil {
+		t.Errorf("Boot err,%s", err.Error())
+	}
+	time.Sleep(5 * time.Second)
+	t.Log("------------------BeginRemove------------------------")
+	var rmId int
+	var leader *raft.Raft
+	for i, ra := range ras {
+		if ra.State() == raft.Leader {
+			leader = ra
+			rmId = (i + 1) % len(ras)
+			rmNode := fmt.Sprintf("n%d", rmId)
+			t.Logf("Remove %s", rmNode)
+			if err := ra.RemoveServer(raft.ServerID(rmNode), 0, 0).Error(); err != nil {
+				t.Errorf("Remove err,%s", err.Error())
+			}
+			if err := ras[rmId].Shutdown().Error(); err != nil {
+				t.Errorf("Shutdown err,%s", err.Error())
+			}
+			break
+		}
+	}
+
+	time.Sleep(time.Second)
+	t.Log("------------------ReJoin------------------------")
+
+	config := raft.DefaultConfig()
+	config.LogOutput = os.Stdout
+	config.LocalID = raft.ServerID(fmt.Sprintf("n%d", rmId))
+	config.SnapshotInterval = 100 * time.Second
+	config.ShutdownOnRemove = false
+	config.MaxAppendEntries = 1000
+	logStore := raft.NewInmemStore()
+	stableStore := raft.NewInmemStore()
+	snapshot := raft.NewInmemSnapshotStore()
+	ip := fmt.Sprintf("127.0.0.1:11114")
+	addr, _ := net.ResolveTCPAddr("tcp", ip)
+	transport, _ := raft.NewTCPTransport(ip, addr, 3, 4*time.Second, os.Stdout)
+	ra, _ := raft.NewRaft(config, &fsmTest{}, logStore, stableStore, snapshot, transport)
+	go func() {
+		t.Log("Reboot")
+		configuration.Servers[rmId].Address = raft.ServerAddress(ip)
+		if err := ra.BootstrapCluster(configuration).Error(); err != nil {
+			t.Errorf("Boot err,%s", err.Error())
+		}
+	}()
+	go func() {
+		time.Sleep(5000 * time.Millisecond)
+		t.Log("AddVoter")
+		if err := leader.AddVoter(config.LocalID, raft.ServerAddress(ip), 0, 0).Error(); err != nil {
+			t.Errorf("AddVoter err,%s", err.Error())
+		}
+	}()
+
+	//time.Sleep(1 * time.Millisecond)
+	//t.Log("Leader ", ra.Leader())
+	//t.Log("------------------ReBoot------------------------")
+	//
+	//configuration.Servers[rmId].Address = raft.ServerAddress(ip)
+	//if err := ra.BootstrapCluster(configuration).Error(); err != nil {
+	//	t.Errorf("Boot err,%s", err.Error())
+	//} else {
+	//	t.Log("Reboot success")
+	//}
+	//t.Log("Leader ", ra.Leader())
+
+	time.Sleep(20 * time.Second)
+
 }

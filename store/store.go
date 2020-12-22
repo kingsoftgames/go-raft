@@ -367,7 +367,7 @@ func (th *RaftStore) Apply(log *raft.Log) interface{} {
 		logrus.Infof("Apply error %s", err.Error())
 		return nil
 	}
-	//logrus.Debugf("[Store][%s]Apply %d", th.getNodeName(), cmd.Cmd)
+	//logrus.Debugf("[Store][%s]Apply %v,%d,%d", th.getNodeName(), cmd.Cmd, log.Term, log.Index)
 	switch cmd.Cmd {
 	case inner.ApplyCmd_GET:
 		return th.applyGet(cmd.GetGet())
@@ -415,15 +415,36 @@ func (th *RaftStore) Restore(rc io.ReadCloser) error {
 	th.m = o
 	return nil
 }
-
-func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
+func (th *RaftStore) initRaftConfig() *raft.Config {
 	config := raft.DefaultConfig()
 	config.LocalID = raft.ServerID(th.getNodeName())
+	if th.config.SnapshotIntervalS > 0 {
+		config.SnapshotInterval = time.Duration(th.config.SnapshotIntervalS) * time.Second
+	}
+	config.ShutdownOnRemove = false
+	if th.config.MaxAppendEntries > 0 {
+		config.MaxAppendEntries = th.config.MaxAppendEntries
+	}
+	if th.config.ElectionTimeoutMS != 0 {
+		config.ElectionTimeout = time.Duration(th.config.ElectionTimeoutMS) * time.Millisecond
+	}
+	if th.config.HeartbeatTimeoutMS != 0 {
+		config.HeartbeatTimeout = time.Duration(th.config.HeartbeatTimeoutMS) * time.Millisecond
+	}
+	if th.config.LeaderLeaseTimeoutMS != 0 {
+		config.LeaderLeaseTimeout = time.Duration(th.config.LeaderLeaseTimeoutMS) * time.Millisecond
+	}
+	if th.config.PerformanceMultiplier > 0 {
+		config.ElectionTimeout *= time.Duration(th.config.PerformanceMultiplier)
+		config.HeartbeatTimeout *= time.Duration(th.config.PerformanceMultiplier)
+		config.LeaderLeaseTimeout *= time.Duration(th.config.PerformanceMultiplier)
+	}
+	return config
+}
+func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
+	config := th.initRaftConfig()
 	config.LogOutput = logOutput
 	config.LogLevel = logLevel
-	config.SnapshotInterval = 100 * time.Second
-	config.ShutdownOnRemove = false
-	//config.SnapshotInterval = 10 * time.Millisecond
 	addr, err := net.ResolveTCPAddr("tcp", th.config.Addr)
 	if err != nil {
 		return err
@@ -439,16 +460,7 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 	var snapshot raft.SnapshotStore
 	if th.config.StoreInMem {
 		if th.config.LogCacheCapacity > 0 {
-			//TODO 效率提升的地方，目前暂时用nomad的方法
-			//if th.logStore, err = NewLogStoreCache(th.config.LogCacheCapacity, th.config.StoreDir); err != nil {
-			//	return fmt.Errorf("NewLogStoreCache err,%s", err)
-			//}
-			//logStore = th.logStore
-			//stableStore = raft.NewInmemStore()
-			//snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
-			//if err != nil {
-			//	return err
-			//}
+			//log部分缓存在内存
 			snapshot, err = raft.NewFileSnapshotStore(th.config.StoreDir, retainSnapshotCount, logOutput)
 			if err != nil {
 				return fmt.Errorf("new snapshot : %s", err.Error())
@@ -458,12 +470,10 @@ func (th *RaftStore) Open(logLevel string, logOutput io.Writer) error {
 				return fmt.Errorf("new bolt store: %s", err.Error())
 			}
 			th.raftStore = boltDB
-
-			cacheStore, err := raft.NewLogCache(th.config.LogCacheCapacity, boltDB)
-			if err != nil {
-				return err
+			if th.logStore, err = NewLogStoreCache(th.config.LogCacheCapacity, boltDB); err != nil {
+				return fmt.Errorf("NewLogStoreCache err,%s", err)
 			}
-			logStore = cacheStore
+			logStore = th.logStore
 			stableStore = boltDB
 		} else {
 			logStore = raft.NewInmemStore()
@@ -581,7 +591,7 @@ func (th *RaftStore) runObserver() {
 		}
 	})
 
-	th.statTicker = common.NewTicker(5*time.Second, func() {
+	th.statTicker = common.NewTicker(time.Duration(th.config.PrintStateIntervalS)*time.Second, func() {
 		logrus.Debugf("[%s][%v]%v", th.getNodeName(), th.raft.State(), th.raft.Stats())
 	})
 }

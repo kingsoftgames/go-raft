@@ -94,22 +94,28 @@ func ReadFileAndParseFlagWithArgsSlice(fs []FileFft, args []string) error {
 		file := f.file
 		fft := f.fft
 		if len(file) > 0 {
-			b, err := ioutil.ReadFile(file)
-			if err != nil {
-				return err
-			}
-			var Unmarshal func(data []byte, v interface{}) error
-			if fft.Type() == "json" {
-				Unmarshal = json.Unmarshal
-			} else if fft.Type() == "yaml" {
-				Unmarshal = yaml.Unmarshal
-			}
-			if err := Unmarshal(b, fft); err != nil {
+			if err := UnmarshalFFT(file, fft); err != nil {
 				return err
 			}
 		}
 	}
 	return f.ParseWithArgsSlice(fs, args)
+}
+func UnmarshalFFT(file string, fft FileFlagType) error {
+	b, err := ioutil.ReadFile(file)
+	if err != nil {
+		return err
+	}
+	var Unmarshal func(data []byte, v interface{}) error
+	if fft.Type() == "json" {
+		Unmarshal = json.Unmarshal
+	} else if fft.Type() == "yaml" {
+		Unmarshal = yaml.Unmarshal
+	}
+	if err := Unmarshal(b, fft); err != nil {
+		return err
+	}
+	return nil
 }
 func ReadFileAndParseFlagWithArgs(file string, fft FileFlagType, args []string) error {
 	var f Flag
@@ -118,17 +124,7 @@ func ReadFileAndParseFlagWithArgs(file string, fft FileFlagType, args []string) 
 		return err
 	}
 	if len(file) > 0 {
-		b, err := ioutil.ReadFile(file)
-		if err != nil {
-			return err
-		}
-		var Unmarshal func(data []byte, v interface{}) error
-		if fft.Type() == "json" {
-			Unmarshal = json.Unmarshal
-		} else if fft.Type() == "yaml" {
-			Unmarshal = yaml.Unmarshal
-		}
-		if err := Unmarshal(b, fft); err != nil {
+		if err := UnmarshalFFT(file, fft); err != nil {
 			return err
 		}
 	}

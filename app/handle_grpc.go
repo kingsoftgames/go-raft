@@ -25,6 +25,7 @@ func (th *RaftServerGRpc) JoinRequest(ctx context.Context, req *inner.JoinReq) (
 	logrus.Infof("[API][%s]JoinRequest,%v", th.App.getNodeName(), *req.Info)
 	defer logrus.Debugf("[API][%s]JoinRequest finished,%v", th.App.getNodeName(), *req.Info)
 	f := NewReplyFuturePrioritized(ctx, req, &inner.JoinRsp{})
+	defer PutReplyFuture(f)
 	f.cmd = FutureCmdTypeJoin
 	th.App.GRpcHandle(f)
 	if f.Error() != nil {
@@ -36,6 +37,7 @@ func (th *RaftServerGRpc) SynMember(ctx context.Context, req *inner.SynMemberReq
 	logrus.Infof("[API][%s]SynMember,%s,%v", th.App.getNodeName(), req.NodeId, req.Mem)
 	defer logrus.Infof("[API][%s]SynMember finished ,%s,%v", th.App.getNodeName(), req.NodeId, req.Mem)
 	f := NewReplyFuturePrioritized(ctx, req, &inner.SynMemberRsp{})
+	defer PutReplyFuture(f)
 	f.cmd = FutureCmdTypeSynMember
 	th.App.GRpcHandle(f)
 	if f.Error() != nil {
@@ -68,8 +70,8 @@ func (th *RaftServerGRpc) TransGrpcRequest(ctx context.Context, req *inner.Trans
 	if err = common.Decode(req.Data, _req.Interface()); err != nil {
 		return
 	}
-	logrus.Debugf("TransGrpcRequest %v", _req)
-	defer logrus.Debugf("TransGrpcRequest rsp %v", _req)
+	tt := time.Now()
+	defer logrus.Debugf("TransGrpcRequest rsp %d", time.Now().Sub(tt).Microseconds())
 	_rsp := reflect.New(hd.paramRsp)
 	if len(req.Hash) > 0 {
 		ctx = context.WithValue(ctx, "hash", req.Hash)
@@ -121,6 +123,7 @@ func (th *RaftServerGRpc) RemoveMember(ctx context.Context, req *inner.RemoveMem
 	logrus.Infof("[API][%s]RemoveMember,%s", th.App.getNodeName(), req.NodeId)
 	//defer logrus.Debugf("[API][%s]RemoveMember finished,%s", th.App.getNodeName(), req.NodeId)
 	f := NewReplyFuturePrioritized(ctx, req, &inner.RemoveMemberRsp{})
+	defer PutReplyFuture(f)
 	f.cmd = FutureCmdTypeRemove
 	th.App.GRpcHandle(f)
 	if f.Error() != nil {
@@ -132,6 +135,7 @@ func (th *RaftServerGRpc) ExitRequest(ctx context.Context, req *inner.ExitReq) (
 	logrus.Infof("[API][%s]ExitRequest,%s", th.App.getNodeName(), req.NodeId)
 	rsp := &inner.ExitRsp{}
 	f := NewReplyFuturePrioritized(ctx, req, rsp)
+	defer PutReplyFuture(f)
 	f.cmd = FutureCmdTypeExit
 	th.App.GRpcHandle(f)
 	if f.Error() != nil && f.Error() != raft.ErrNotLeader {

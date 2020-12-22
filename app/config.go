@@ -9,6 +9,7 @@ type DebugConfigure struct {
 	TraceLine       bool `yaml:"trace_line" json:"trace_line" help:"if true,open future trace line log"`
 	PrintIntervalMs int  `yaml:"print_interval_ms" json:"print_interval_ms" help:"print debug log interval ms"`
 	GRpcHandleHash  bool `yaml:"grpc_handle_hash" json:"grpc_handle_hash" help:"" default:"true"`
+	EnableGoTrace   bool `yaml:"enable_go_trace" json:"enable_go_trace" help:""`
 }
 
 type Configure struct {
@@ -23,8 +24,8 @@ type Configure struct {
 	JoinFile              string                      `yaml:"join_file" json:"join_file" help:"join file,for nomad service"`
 	ConnectTimeoutMs      int                         `yaml:"connect_timeout_ms" json:"connect_timeout_ms" help:"connect timeout ms" default:"100"`
 	Ver                   string                      `yaml:"ver" json:"ver" help:"version" default:"v1.3"`
-	HealthCheckIntervalMs int                         `yaml:"health_check_interval_ms" json:"health_check_interval_ms" help:"heath check interval" default:"200"`
-	CleanDeadServerS      int                         `yaml:"cleanup_dead_server_s" json:"cleanup_dead_server_s" help:"if >0 ,remove node from raft cluster when heath check timeout over cleanup_dead_server_s second"`
+	HealthCheckIntervalMs int                         `yaml:"health_check_interval_ms" json:"health_check_interval_ms" help:"heath check interval" default:"2000"`
+	CleanDeadServerS      int                         `yaml:"cleanup_dead_server_s" json:"cleanup_dead_server_s" help:"if >0 ,remove node from raft cluster when heath check timeout over cleanup_dead_server_s second" default:"50"`
 	RunChanNum            int                         `yaml:"run_chan_num" json:"run_chan_num" help:"logic chan process raft apply" default:"100"`
 	Raft                  *store.RaftConfigure        `yaml:"raft" json:"raft"`
 	Log                   *common.LogConfigure        `yaml:"log" json:"log"`

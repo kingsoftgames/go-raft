@@ -13,7 +13,7 @@ type AlerterHttpConfigure struct {
 	Url string `yaml:"url" json:"url" default:"http://localhost:13001/alerter" help:"url for http post"`
 }
 type AlerterConfigure struct {
-	Panic bool                 `yaml:"panic" json:"panic" help:"if set true,process will exit when panic"`
+	Panic bool                 `yaml:"panic" json:"panic" help:"if set true,process will exit when panic" default:"true"`
 	Type  string               `yaml:"type" json:"type" default:"http" help:"notify type"`
 	Http  AlerterHttpConfigure `yaml:"http" json:"http"`
 	GRpc  AlerterGRpcConfigure `yaml:"grpc" json:"grpc"`

@@ -46,6 +46,20 @@ func (th *raftCollector) Update(ch chan<- prometheus.Metric) error {
 		atomic.StoreUint64(&th.app.queryCnt, 0)
 		return float64(cnt)
 	})
+	ch <- prometheus.NewGaugeFunc(prometheus.GaugeOpts{
+		Namespace:   th.namespace,
+		Subsystem:   subsystem,
+		Name:        "leader",
+		Help:        "IsLeader node",
+		ConstLabels: nil,
+	}, func() float64 {
+		leader := 0
+		if th.app.GetStore().IsLeader() {
+			leader = 1
+		}
+		return float64(leader)
+	})
+	//logrus.Debugf("Pool %d,%d", atomic.LoadUint64(&alloc), atomic.LoadUint64(&put))
 	return nil
 }
 func newRaftCollector(host interface{}) (common.Collector, error) {

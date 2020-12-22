@@ -21,7 +21,9 @@ type ImplementedTestServer struct {
 }
 
 func (th *ImplementedTestServer) GetRequest(ctx context.Context, req *GetReq) (*GetRsp, error) {
+	//defer logrus.Infof("GetRequest finished")
 	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &GetRsp{})
+	defer app.PutReplyFuture(f)
 	th.app.GRpcHandle(f)
 	if f.Error() != nil {
 		return nil, f.Error()
@@ -29,7 +31,9 @@ func (th *ImplementedTestServer) GetRequest(ctx context.Context, req *GetReq) (*
 	return f.Response().(*GetRsp), nil
 }
 func (th *ImplementedTestServer) SetRequest(ctx context.Context, req *SetReq) (*SetRsp, error) {
+	//defer logrus.Infof("SetRequest finished")
 	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &SetRsp{TimeLine: []*TimeLineUnit{}})
+	defer app.PutReplyFuture(f)
 	f.Timeline = make([]app.TimelineInfo, 0)
 	f.Timeline = append(f.Timeline, app.TimelineInfo{Tag: req.Timeline[0].Tag, T: req.Timeline[0].Timeline})
 	f.AddTimeLine("Receive")
@@ -51,7 +55,9 @@ func (th *ImplementedTestServer) SetRequest(ctx context.Context, req *SetReq) (*
 	return rsp, nil
 }
 func (th *ImplementedTestServer) DelRequest(ctx context.Context, req *DelReq) (*DelRsp, error) {
+	//defer logrus.Infof("DelRequest finished")
 	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &DelRsp{})
+	defer app.PutReplyFuture(f)
 	th.app.GRpcHandle(f)
 	if f.Error() != nil {
 		return nil, f.Error()
@@ -60,6 +66,7 @@ func (th *ImplementedTestServer) DelRequest(ctx context.Context, req *DelReq) (*
 }
 func (th *ImplementedTestServer) CrashRequest(ctx context.Context, req *CrashReq) (*CrashRsp, error) {
 	f := app.NewReplyFuture(context.WithValue(ctx, "hash", req.Header.Hash), req, &CrashRsp{})
+	defer app.PutReplyFuture(f)
 	th.app.GRpcHandle(f)
 	if f.Error() != nil {
 		return nil, f.Error()
@@ -92,6 +99,7 @@ func (th *ImplementedTestServer) LocalRequest(ctx context.Context, req *LocalReq
 						A: key,
 					}
 					f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &SetRsp{TimeLine: []*TimeLineUnit{}})
+					defer app.PutReplyFuture(f)
 					mainApp.GRpcHandle(f)
 					f.Error()
 				}
@@ -104,6 +112,7 @@ func (th *ImplementedTestServer) LocalRequest(ctx context.Context, req *LocalReq
 					key := strconv.Itoa(idx)
 					req.A = key
 					f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &GetRsp{})
+					defer app.PutReplyFuture(f)
 					mainApp.GRpcHandle(f)
 					f.Error()
 				}
@@ -117,6 +126,7 @@ func (th *ImplementedTestServer) LocalRequest(ctx context.Context, req *LocalReq
 					key := strconv.Itoa(idx)
 					req.A = key
 					f := app.NewReplyFuture(context.WithValue(context.Background(), "hash", key), &req, &DelRsp{})
+					defer app.PutReplyFuture(f)
 					mainApp.GRpcHandle(f)
 					f.Error()
 				}
