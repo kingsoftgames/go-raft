@@ -67,3 +67,39 @@ for i:=0;i<10;i++ {
 }
 ```
 - 我觉得go所有的特性能用上的都能试试，不试试怎么知道有哪些坑
+
+## 启动过程
+- 程序在启动之前会调用各个模块的 init 函数注册逻辑
+- 初始化 flag，这里包括从 yaml/json 读取配置文件，从flag读取配置
+- 调用 MainApp.Init 初始化
+- - initDebugConfig 初始化debug信息
+- - InitLog 初始化日志信息
+- - InitCodec 初始化 Codec 信息
+- - IApp.Init 初始化 IApp 信息，应用层逻辑的初始化在这里面调用
+- - 注册各种事件处理
+- - 调用 RaftStore.Open 初始化 store 
+- - - 根据配置初始化落地存盘信息，并创建 Raft
+- - - RaftStore.runObserver 启动 raft 状态监控协程
+- - - RaftStore.runApply 启动 Apply 协程集，但是如果配置 RaftApplyHash==0 的话，该协程集并不会起作用
+- - - RaftStore.runExpire 启动 key 的过期检测定时器，当 KeyExpireS>0 时启用
+- - joinSelf 把本节点也一起放到 MemberList 中，
+- - 注册 grpc 服务，包括内部grpc通信和外面api的grpc通信
+- - runOtherRequest 启用处理内部grpc请求的协程
+- - Handler.Register 注册 IApp 的处理函数
+- - healthTicker 开启心跳定时器
+- - watchJoinFile 监控 join_addr.txt 文件，可以根据这个txt文件动态增加raft节点
+- - 初始化prome
+- - 注册处理store的Expire事件
+- MainApp.Start 开启各路协程处理
+- - innerLogic 主要是处理 MainApp 中的定时器回调，watchFile回调
+- - runGRpcRequest 处理其他节点发过来的grpc请求
+- - runLogic 实际处理Api的协程
+- - 启动 fileWatch
+- - startUpdateTime 处理各节点直接的心跳超时
+- 整个服务器算启动完成并等待退出信号
+
+## 退出过程
+- MainApp.preStop 停止prome, 定时器，watch等
+- FutureCmdTypeGracefulStop 走Stop逻辑
+- - 如果是follower节点，通知leader节点删除自己，处理完当前所有的api请求后正常退出
+- - 如果是leader节点，transferLeader后，等待变成follower节点，走follower节点退出流程
